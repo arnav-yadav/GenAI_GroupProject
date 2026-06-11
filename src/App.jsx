@@ -2,8 +2,8 @@ import { useState, useRef, useEffect } from 'react'
 
 /* ============================================================================
  * Dr. Aria — AI Healthcare Triage Assistant
- * V2 — Prompt Engineering: persona + few-shot + chain-of-thought system prompt,
- * structured JSON output (PATIENT_SUMMARY) parsing, and an AI Internals panel.
+ * V3 — Agent Logic: adaptive multi-phase questioning. The agent advances through
+ * intake → profiling → history → assessment, tracking state across turns.
  * ==========================================================================*/
 
 const CHAT_ENDPOINT =
@@ -64,6 +64,14 @@ Dr. Aria: "A spreading rash with fever can be serious. Does the rash look like s
 Be empathetic, concise, never alarmist unless warranted. Never diagnose. Always triage.
 `
 
+// Adaptive agent: the 4 phases of the triage interview
+const PHASES = [
+  { key: 'intake', label: 'Intake', desc: 'Primary complaint + onset' },
+  { key: 'profiling', label: 'Profiling', desc: 'Severity, associated symptoms' },
+  { key: 'history', label: 'History', desc: 'Medical history, meds, allergies' },
+  { key: 'assessment', label: 'Assessment', desc: 'Urgency tier + action' },
+]
+
 const SYLLABUS_CONCEPTS = [
   { name: 'System Prompt', feature: 'Dr. Aria identity & rules' },
   { name: 'ChatML Format', feature: 'system / user / assistant message structure' },
@@ -71,12 +79,14 @@ const SYLLABUS_CONCEPTS = [
   { name: 'Few-shot Learning', feature: '3 clinical examples in system prompt' },
   { name: 'Chain-of-Thought', feature: '5-step internal reasoning protocol' },
   { name: 'Structured Output (JSON)', feature: 'PATIENT_SUMMARY block' },
+  { name: 'AI Agent Pattern', feature: 'multi-phase adaptive questioning' },
 ]
 
 export default function App() {
   const [conversationHistory, setConversationHistory] = useState([])
   const [patientSummary, setPatientSummary] = useState(null)
   const [urgencyCode, setUrgencyCode] = useState(null)
+  const [phase, setPhase] = useState('intake') // intake|profiling|history|assessment
   const [isLoading, setIsLoading] = useState(false)
   const [activeTab, setActiveTab] = useState('chat')
   const [tokenEstimate, setTokenEstimate] = useState(0)
@@ -90,6 +100,16 @@ export default function App() {
   useEffect(() => {
     if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight
   }, [conversationHistory, isLoading])
+
+  // Adaptive agent: derive the current phase from turn count + summary presence
+  function detectPhase(history, hasSummary) {
+    if (hasSummary) return 'assessment'
+    const turns = history.filter((m) => m.role === 'user').length
+    if (turns <= 2) return 'intake'
+    if (turns <= 4) return 'profiling'
+    if (turns <= 6) return 'history'
+    return 'assessment'
+  }
 
   async function sendMessage() {
     const text = input.trim()
@@ -119,6 +139,7 @@ export default function App() {
       let replyText = data.content[0].text
 
       // STRUCTURED OUTPUT — extract & parse the <PATIENT_SUMMARY> JSON block
+      let hasSummary = false
       const m = replyText.match(/<PATIENT_SUMMARY>([\s\S]*?)<\/PATIENT_SUMMARY>/)
       if (m) {
         try {
@@ -126,6 +147,7 @@ export default function App() {
           setPatientSummary(parsed)
           if (parsed.urgency_code) setUrgencyCode(parsed.urgency_code)
           if (parsed.reasoning_trace) setReasoningTrace(parsed.reasoning_trace)
+          hasSummary = true
         } catch (e) { /* malformed JSON — keep chatting */ }
         replyText = replyText.replace(/<PATIENT_SUMMARY>[\s\S]*?<\/PATIENT_SUMMARY>/, '').trim()
       }
@@ -133,6 +155,7 @@ export default function App() {
       const updated = [...newHistory, { role: 'assistant', content: replyText }]
       setConversationHistory(updated)
       setTokenEstimate(Math.round((SYSTEM_PROMPT.length + JSON.stringify(updated).length) / 4))
+      setPhase(detectPhase(updated, hasSummary)) // advance the agent state machine
     } catch (err) {
       setErrorMsg(`Could not reach Dr. Aria: ${err.message}`)
     } finally {
@@ -144,6 +167,7 @@ export default function App() {
     setConversationHistory([])
     setPatientSummary(null)
     setUrgencyCode(null)
+    setPhase('intake')
     setTokenEstimate(0)
     setReasoningTrace('')
     setErrorMsg(null)
@@ -179,7 +203,7 @@ export default function App() {
           <ChatTab {...{ scrollRef, conversationHistory, isLoading, input, setInput, sendMessage, newPatient, errorMsg }} />
         )}
         {activeTab === 'internals' && (
-          <InternalsTab {...{ turnCount, tokenEstimate, reasoningTrace }} />
+          <InternalsTab {...{ turnCount, tokenEstimate, reasoningTrace, phase }} />
         )}
       </main>
     </div>
@@ -222,7 +246,7 @@ function ChatTab({ scrollRef, conversationHistory, isLoading, input, setInput, s
   )
 }
 
-function InternalsTab({ turnCount, tokenEstimate, reasoningTrace }) {
+function InternalsTab({ turnCount, tokenEstimate, reasoningTrace, phase }) {
   const [copied, setCopied] = useState(false)
   function copyPrompt() {
     navigator.clipboard?.writeText(SYSTEM_PROMPT).then(() => { setCopied(true); setTimeout(() => setCopied(false), 2000) })
@@ -238,6 +262,26 @@ function InternalsTab({ turnCount, tokenEstimate, reasoningTrace }) {
           <ConfigItem k="Top-p" v="0.95" />
           <ConfigItem k="Conversation turns" v={String(turnCount)} />
           <ConfigItem k="Estimated tokens used" v={tokenEstimate.toLocaleString()} />
+          <ConfigItem k="Current phase" v={phase} />
+        </div>
+      </section>
+
+      <section className="card">
+        <h3>Adaptive Agent Phase</h3>
+        <p className="card-sub">The agent advances through four phases as it gathers information.</p>
+        <div className="phase-track">
+          {PHASES.map((p, i) => (
+            <div key={p.key} className="phase-step">
+              <div className={`phase-pill ${phase === p.key ? 'phase-active' : ''}`}>
+                <span className="phase-num">{i + 1}</span>
+                <div>
+                  <div className="phase-label">{p.label}</div>
+                  <div className="phase-desc">{p.desc}</div>
+                </div>
+              </div>
+              {i < PHASES.length - 1 && <div className="phase-arrow">→</div>}
+            </div>
+          ))}
         </div>
       </section>
 

@@ -21,3 +21,5 @@ proxy holding the API key is added in a later version.
 - **V2 — Prompt Engineering:** full Dr. Aria persona, few-shot clinical examples,
   chain-of-thought reasoning protocol, and structured JSON output (`PATIENT_SUMMARY`)
   parsing. Adds the AI Internals panel (model config, system prompt viewer, reasoning trace).
+- **V3 — Agent Logic:** adaptive multi-phase questioning. The agent tracks state and
+  advances through intake → profiling → history → assessment based on turn count.
