@@ -1,0 +1,20 @@
+{
+  "name": "ai-healthcare-triage-assistant",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "AI Healthcare Triage Assistant — conversational medical triage chatbot (Dr. Aria). University GenAI project.",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.3.1",
+    "vite": "^5.4.0"
+  }
+}
