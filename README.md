@@ -15,7 +15,9 @@ npm run dev
 The chat works inside the Claude.ai artifact sandbox as-is. For standalone use, a server
 proxy holding the API key is added in a later version.
 
-## V1 — Basic Chatbot
-Working triage chat UI calling the Claude Messages API with a system prompt. Demonstrates
-the ChatML message format (system / user / assistant), conversational memory, and the core
-inference parameters (temperature, top-p, max tokens).
+## Versions
+- **V1 — Basic Chatbot:** triage chat UI calling the Claude Messages API. ChatML format,
+  system prompt, conversational memory, temperature/top-p/max tokens.
+- **V2 — Prompt Engineering:** full Dr. Aria persona, few-shot clinical examples,
+  chain-of-thought reasoning protocol, and structured JSON output (`PATIENT_SUMMARY`)
+  parsing. Adds the AI Internals panel (model config, system prompt viewer, reasoning trace).
