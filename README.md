@@ -25,3 +25,5 @@ proxy holding the API key is added in a later version.
   advances through intake → profiling → history → assessment based on turn count.
 - **V4 — RAG Basics:** simulated medical knowledge base (NHS/NICE guideline chunks).
   Symptom keywords retrieve and rank relevant documents by similarity score (Knowledge Base tab).
+- **V5 — Advanced RAG:** retrieval pipeline visualisation — query rewriting, HyDE
+  (hypothetical document embeddings), and cross-encoder re-ranking.

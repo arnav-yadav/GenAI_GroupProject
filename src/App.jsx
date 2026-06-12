@@ -2,8 +2,8 @@ import { useState, useRef, useEffect } from 'react'
 
 /* ============================================================================
  * Dr. Aria — AI Healthcare Triage Assistant
- * V4 — RAG Basics: a simulated medical knowledge base. Symptom keywords are
- * matched against NHS/NICE guideline chunks and surfaced with similarity scores.
+ * V5 — Advanced RAG: query rewriting, HyDE (hypothetical document embeddings),
+ * and cross-encoder re-ranking, visualised as a retrieval pipeline.
  * ==========================================================================*/
 
 const CHAT_ENDPOINT =
@@ -235,7 +235,7 @@ export default function App() {
           <InternalsTab {...{ turnCount, tokenEstimate, reasoningTrace, phase }} />
         )}
         {activeTab === 'kb' && (
-          <KnowledgeTab ragDocs={ragDocs} hasConversation={conversationHistory.length > 0} />
+          <KnowledgeTab ragDocs={ragDocs} conversationHistory={conversationHistory} />
         )}
       </main>
     </div>
@@ -355,12 +355,29 @@ function ConfigItem({ k, v, note }) {
   )
 }
 
-function KnowledgeTab({ ragDocs, hasConversation }) {
+function KnowledgeTab({ ragDocs, conversationHistory }) {
+  const hasConversation = conversationHistory.length > 0
   function simColor(s) {
     if (s >= 0.9) return '#22c55e'
     if (s >= 0.8) return '#eab308'
     return '#94a3b8'
   }
+
+  // Advanced RAG pipeline (simulated): rewrite the raw query, build a HyDE
+  // hypothetical answer, then re-rank candidate chunks by similarity.
+  const lastUser = [...conversationHistory].reverse().find((m) => m.role === 'user')
+  const rawQuery = lastUser ? lastUser.content : ''
+  const convText = conversationHistory.map((m) => m.content).join(' ').toLowerCase()
+  const matchedTerms = [...new Set(
+    knowledgeBase.flatMap((d) => d.keywords).filter((k) => convText.includes(k.toLowerCase()))
+  )].slice(0, 8)
+  const rewrittenQuery = matchedTerms.length
+    ? `clinical triage guidelines for: ${matchedTerms.join(', ')}`
+    : ''
+  const hydeDoc = ragDocs.length
+    ? `A patient presenting with ${matchedTerms.slice(0, 3).join(', ') || 'these symptoms'} should be assessed for ${ragDocs[0].title.toLowerCase()} and triaged accordingly.`
+    : ''
+
   return (
     <div className="panel">
       <div className="kb-header">
@@ -370,6 +387,25 @@ function KnowledgeTab({ ragDocs, hasConversation }) {
           (ChromaDB / Pinecone). Showing simulated retrieval for demonstration.
         </p>
       </div>
+
+      {hasConversation && (
+        <div className="rag-pipeline">
+          <div className="pipe-step">
+            <div className="pipe-tag">1 · Query Rewriting</div>
+            <div className="pipe-from">“{rawQuery || '—'}”</div>
+            <div className="pipe-arrow-v">↓</div>
+            <div className="pipe-to">{rewrittenQuery || '—'}</div>
+          </div>
+          <div className="pipe-step">
+            <div className="pipe-tag">2 · HyDE — Hypothetical Document</div>
+            <div className="pipe-hyde">{hydeDoc || 'Awaiting symptoms…'}</div>
+          </div>
+          <div className="pipe-step">
+            <div className="pipe-tag">3 · Cross-Encoder Re-ranking</div>
+            <div className="pipe-note">{ragDocs.length} candidate chunk{ragDocs.length === 1 ? '' : 's'} re-scored and ordered by relevance ↓</div>
+          </div>
+        </div>
+      )}
 
       {!hasConversation ? (
         <div className="empty-card">

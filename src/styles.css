@@ -96,6 +96,16 @@ body {
 .sim-score { font-weight: 700; font-size: 13px; font-family: ui-monospace, monospace; min-width: 36px; }
 .kb-excerpt { font-style: italic; font-size: 14px; line-height: 1.55; margin: 0; }
 
+/* Advanced RAG pipeline (V5) */
+.rag-pipeline { display: flex; flex-direction: column; gap: 10px; margin-bottom: 18px; }
+.pipe-step { background: var(--surface); border: 1px solid var(--border); border-left: 4px solid #6d28d9; border-radius: 10px; padding: 12px 14px; box-shadow: var(--shadow); }
+.pipe-tag { font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.4px; color: #6d28d9; margin-bottom: 6px; }
+.pipe-from { font-size: 13px; color: var(--text-muted); font-style: italic; }
+.pipe-arrow-v { color: var(--text-muted); font-size: 14px; }
+.pipe-to { font-size: 13.5px; font-family: ui-monospace, 'SF Mono', Menlo, monospace; background: var(--surface-2); border: 1px solid var(--border); border-radius: 6px; padding: 6px 10px; display: inline-block; }
+.pipe-hyde { font-size: 13.5px; font-style: italic; line-height: 1.5; color: var(--text); }
+.pipe-note { font-size: 13px; color: var(--text-muted); }
+
 /* Chat */
 .chat-tab { display: flex; flex-direction: column; flex: 1; min-height: 0; }
 .messages { flex: 1; overflow-y: auto; padding: 20px; display: flex; flex-direction: column; gap: 14px; min-height: 300px; }
