@@ -2,8 +2,8 @@ import { useState, useRef, useEffect } from 'react'
 
 /* ============================================================================
  * Dr. Aria — AI Healthcare Triage Assistant
- * V3 — Agent Logic: adaptive multi-phase questioning. The agent advances through
- * intake → profiling → history → assessment, tracking state across turns.
+ * V4 — RAG Basics: a simulated medical knowledge base. Symptom keywords are
+ * matched against NHS/NICE guideline chunks and surfaced with similarity scores.
  * ==========================================================================*/
 
 const CHAT_ENDPOINT =
@@ -64,6 +64,18 @@ Dr. Aria: "A spreading rash with fever can be serious. Does the rash look like s
 Be empathetic, concise, never alarmist unless warranted. Never diagnose. Always triage.
 `
 
+// Simulated RAG knowledge base — keyword → guideline chunk mapping
+const knowledgeBase = [
+  { id: 'kb1', title: 'Cardiac Emergency Triage Protocol', source: 'NHS England Clinical Guidelines 2023', keywords: ['chest', 'heart', 'cardiac', 'arm pain', 'jaw', 'palpitation'], similarity: 0.94, chunk: 'Chunk 4 of 11 | 487 tokens', excerpt: 'Chest pain with radiation to the arm, jaw, or shoulder, combined with diaphoresis or nausea, should be treated as a STEMI until proven otherwise. Immediate 999 activation is required. Do not delay for further assessment.' },
+  { id: 'kb2', title: 'Stroke Recognition — FAST & Beyond', source: 'NICE Guideline NG128 2023', keywords: ['face', 'arm weak', 'speech', 'slurred', 'headache', 'sudden'], similarity: 0.91, chunk: 'Chunk 2 of 9 | 512 tokens', excerpt: 'Use the FAST assessment: Facial drooping, Arm weakness, Speech difficulty, Time to call 999. Patients presenting with sudden severe headache ("thunderclap") without trauma should be urgently assessed for subarachnoid haemorrhage.' },
+  { id: 'kb3', title: 'Headache Red Flags & Neurological Triage', source: 'NICE Guideline CG150 2022', keywords: ['headache', 'head pain', 'migraine', 'worst', 'sudden'], similarity: 0.88, chunk: 'Chunk 1 of 7 | 431 tokens', excerpt: 'Red flag headaches requiring emergency referral include: thunderclap onset, worst ever headache, associated with fever and neck stiffness, headache with focal neurology. Gradual onset with typical migraine features and no red flags may be managed in primary care.' },
+  { id: 'kb4', title: 'Respiratory Distress Triage Guidelines', source: 'BTS Emergency Oxygen Guidelines 2023', keywords: ['breathing', 'breath', 'breathe', 'chest tight', 'wheeze', 'oxygen'], similarity: 0.96, chunk: 'Chunk 3 of 8 | 502 tokens', excerpt: 'Patients unable to complete sentences due to breathlessness, SpO2 below 92%, or with cyanosis require immediate emergency response. Triage to emergency services immediately. Assess for anaphylaxis, PE, and acute severe asthma.' },
+  { id: 'kb5', title: 'Acute Abdominal Pain Assessment', source: 'RCGP Clinical Guidelines 2022', keywords: ['stomach', 'abdominal', 'belly', 'abdomen', 'nausea', 'vomiting'], similarity: 0.82, chunk: 'Chunk 6 of 14 | 498 tokens', excerpt: 'Peritonitis signs (board-like rigidity, rebound tenderness) and pulsatile abdominal mass require emergency referral. Fever with right iliac fossa tenderness warrants urgent surgical assessment. Mild, non-specific abdominal discomfort with normal vitals may be managed with watchful waiting.' },
+  { id: 'kb6', title: 'Paediatric Fever and Sepsis Protocol', source: 'NICE Guideline NG51 2023', keywords: ['fever', 'child', 'temperature', 'baby', 'infant', 'hot'], similarity: 0.85, chunk: 'Chunk 2 of 10 | 476 tokens', excerpt: 'Children under 3 months with fever above 38°C require emergency assessment. Non-blanching petechial or purpuric rash with fever in any age group is a medical emergency. Apply the NICE traffic light system for febrile illness stratification.' },
+  { id: 'kb7', title: 'Mental Health Crisis Assessment', source: 'NHS Mental Health Crisis Care Standards 2023', keywords: ['mental', 'anxiety', 'panic', 'self harm', 'self-harm', 'suicidal', 'depressed'], similarity: 0.79, chunk: 'Chunk 5 of 12 | 521 tokens', excerpt: 'Active suicidal ideation with plan and intent requires emergency psychiatric assessment. Panic disorder with first presentation should be evaluated to exclude cardiac and respiratory causes. Crisis line referral is appropriate for patients expressing passive suicidal ideation without immediate risk.' },
+  { id: 'kb8', title: 'Musculoskeletal Pain Stratification', source: 'RCGP MSK Clinical Pathway 2022', keywords: ['back', 'joint', 'muscle', 'arm pain', 'leg', 'knee', 'shoulder'], similarity: 0.74, chunk: 'Chunk 8 of 15 | 463 tokens', excerpt: 'Red flags for back pain (cauda equina syndrome) include saddle anaesthesia, bilateral leg weakness, and loss of bladder/bowel control — refer immediately. Non-specific low back pain without red flags is appropriate for self-management with physiotherapy referral if persistent.' },
+]
+
 // Adaptive agent: the 4 phases of the triage interview
 const PHASES = [
   { key: 'intake', label: 'Intake', desc: 'Primary complaint + onset' },
@@ -80,6 +92,7 @@ const SYLLABUS_CONCEPTS = [
   { name: 'Chain-of-Thought', feature: '5-step internal reasoning protocol' },
   { name: 'Structured Output (JSON)', feature: 'PATIENT_SUMMARY block' },
   { name: 'AI Agent Pattern', feature: 'multi-phase adaptive questioning' },
+  { name: 'RAG (simulated)', feature: 'knowledge base retrieval in Tab 4' },
 ]
 
 export default function App() {
@@ -89,6 +102,7 @@ export default function App() {
   const [phase, setPhase] = useState('intake') // intake|profiling|history|assessment
   const [isLoading, setIsLoading] = useState(false)
   const [activeTab, setActiveTab] = useState('chat')
+  const [ragDocs, setRagDocs] = useState([])
   const [tokenEstimate, setTokenEstimate] = useState(0)
   const [reasoningTrace, setReasoningTrace] = useState('')
   const [input, setInput] = useState('')
@@ -100,6 +114,17 @@ export default function App() {
   useEffect(() => {
     if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight
   }, [conversationHistory, isLoading])
+
+  // RAG retrieval: match guideline keywords against the full conversation
+  function updateRag(history) {
+    const text = history.map((m) => m.content).join(' ').toLowerCase()
+    if (!text.trim()) return setRagDocs([])
+    const matched = knowledgeBase
+      .filter((doc) => doc.keywords.some((k) => text.includes(k.toLowerCase())))
+      .sort((a, b) => b.similarity - a.similarity)
+      .slice(0, 5)
+    setRagDocs(matched)
+  }
 
   // Adaptive agent: derive the current phase from turn count + summary presence
   function detectPhase(history, hasSummary) {
@@ -120,6 +145,7 @@ export default function App() {
     setConversationHistory(newHistory)
     setInput('')
     setIsLoading(true)
+    updateRag(newHistory) // retrieve relevant guidelines as the patient describes symptoms
 
     try {
       const response = await fetch(CHAT_ENDPOINT, {
@@ -156,6 +182,7 @@ export default function App() {
       setConversationHistory(updated)
       setTokenEstimate(Math.round((SYSTEM_PROMPT.length + JSON.stringify(updated).length) / 4))
       setPhase(detectPhase(updated, hasSummary)) // advance the agent state machine
+      updateRag(updated) // re-retrieve over the full conversation incl. Dr. Aria's reply
     } catch (err) {
       setErrorMsg(`Could not reach Dr. Aria: ${err.message}`)
     } finally {
@@ -168,6 +195,7 @@ export default function App() {
     setPatientSummary(null)
     setUrgencyCode(null)
     setPhase('intake')
+    setRagDocs([])
     setTokenEstimate(0)
     setReasoningTrace('')
     setErrorMsg(null)
@@ -177,6 +205,7 @@ export default function App() {
   const tabs = [
     { id: 'chat', label: 'Triage Chat' },
     { id: 'internals', label: 'AI Internals' },
+    { id: 'kb', label: 'Knowledge Base' },
   ]
 
   return (
@@ -204,6 +233,9 @@ export default function App() {
         )}
         {activeTab === 'internals' && (
           <InternalsTab {...{ turnCount, tokenEstimate, reasoningTrace, phase }} />
+        )}
+        {activeTab === 'kb' && (
+          <KnowledgeTab ragDocs={ragDocs} hasConversation={conversationHistory.length > 0} />
         )}
       </main>
     </div>
@@ -319,6 +351,55 @@ function ConfigItem({ k, v, note }) {
       <div className="config-k">{k}</div>
       <div className="config-v">{v}</div>
       {note && <div className="config-note">({note})</div>}
+    </div>
+  )
+}
+
+function KnowledgeTab({ ragDocs, hasConversation }) {
+  function simColor(s) {
+    if (s >= 0.9) return '#22c55e'
+    if (s >= 0.8) return '#eab308'
+    return '#94a3b8'
+  }
+  return (
+    <div className="panel">
+      <div className="kb-header">
+        <h2>RAG: Retrieval-Augmented Generation</h2>
+        <p className="card-sub">
+          In production, symptom keywords would be embedded and matched against a vector database
+          (ChromaDB / Pinecone). Showing simulated retrieval for demonstration.
+        </p>
+      </div>
+
+      {!hasConversation ? (
+        <div className="empty-card">
+          <div className="empty-icon">📚</div>
+          <p>Start a triage conversation to see relevant guidelines retrieved.</p>
+        </div>
+      ) : ragDocs.length === 0 ? (
+        <div className="empty-card"><p>No matching guidelines yet — keep describing symptoms.</p></div>
+      ) : (
+        <div className="kb-list">
+          {ragDocs.map((doc) => (
+            <div key={doc.id} className="kb-card">
+              <div className="kb-card-head">
+                <div>
+                  <div className="kb-title">{doc.title}</div>
+                  <div className="kb-source">{doc.source}</div>
+                </div>
+                <span className="kb-chunk">{doc.chunk}</span>
+              </div>
+              <div className="sim-row">
+                <div className="sim-bar">
+                  <div className="sim-fill" style={{ width: `${doc.similarity * 100}%`, background: simColor(doc.similarity) }} />
+                </div>
+                <span className="sim-score" style={{ color: simColor(doc.similarity) }}>{doc.similarity.toFixed(2)}</span>
+              </div>
+              <p className="kb-excerpt">“{doc.excerpt}”</p>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   )
 }

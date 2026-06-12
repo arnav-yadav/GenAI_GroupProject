@@ -23,3 +23,5 @@ proxy holding the API key is added in a later version.
   parsing. Adds the AI Internals panel (model config, system prompt viewer, reasoning trace).
 - **V3 — Agent Logic:** adaptive multi-phase questioning. The agent tracks state and
   advances through intake → profiling → history → assessment based on turn count.
+- **V4 — RAG Basics:** simulated medical knowledge base (NHS/NICE guideline chunks).
+  Symptom keywords retrieve and rank relevant documents by similarity score (Knowledge Base tab).

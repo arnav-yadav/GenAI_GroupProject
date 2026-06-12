@@ -76,6 +76,26 @@ body {
 .phase-desc { font-size: 11px; color: var(--text-muted); }
 .phase-arrow { color: var(--text-muted); font-size: 18px; font-weight: 700; }
 
+/* Empty states */
+.empty-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 56px 24px; text-align: center; color: var(--text-muted); box-shadow: var(--shadow); }
+.empty-icon { font-size: 40px; margin-bottom: 12px; }
+
+/* Knowledge Base (RAG) */
+.kb-header { margin-bottom: 16px; }
+.kb-header h2 { margin: 0 0 4px; font-size: 18px; }
+.card-sub { margin: 0 0 14px; font-size: 13px; color: var(--text-muted); }
+.kb-list { display: flex; flex-direction: column; gap: 14px; }
+.kb-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; box-shadow: var(--shadow); }
+.kb-card-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; margin-bottom: 10px; }
+.kb-title { font-weight: 700; font-size: 15px; }
+.kb-source { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
+.kb-chunk { font-family: ui-monospace, 'SF Mono', Menlo, monospace; font-size: 11px; background: var(--surface-2); border: 1px solid var(--border); border-radius: 6px; padding: 3px 8px; white-space: nowrap; color: var(--text-muted); }
+.sim-row { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+.sim-bar { flex: 1; height: 8px; background: var(--surface-2); border-radius: 999px; overflow: hidden; border: 1px solid var(--border); }
+.sim-fill { height: 100%; border-radius: 999px; }
+.sim-score { font-weight: 700; font-size: 13px; font-family: ui-monospace, monospace; min-width: 36px; }
+.kb-excerpt { font-style: italic; font-size: 14px; line-height: 1.55; margin: 0; }
+
 /* Chat */
 .chat-tab { display: flex; flex-direction: column; flex: 1; min-height: 0; }
 .messages { flex: 1; overflow-y: auto; padding: 20px; display: flex; flex-direction: column; gap: 14px; min-height: 300px; }
