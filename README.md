@@ -27,3 +27,5 @@ proxy holding the API key is added in a later version.
   Symptom keywords retrieve and rank relevant documents by similarity score (Knowledge Base tab).
 - **V5 — Advanced RAG:** retrieval pipeline visualisation — query rewriting, HyDE
   (hypothetical document embeddings), and cross-encoder re-ranking.
+- **V6 — LangGraph:** the triage flow as an explicit state machine (nodes/edges) with a
+  conditional branch to the EMERGENCY override; LCEL chains + tool calling per node.

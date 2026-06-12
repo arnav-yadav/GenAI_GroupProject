@@ -2,8 +2,8 @@ import { useState, useRef, useEffect } from 'react'
 
 /* ============================================================================
  * Dr. Aria — AI Healthcare Triage Assistant
- * V5 — Advanced RAG: query rewriting, HyDE (hypothetical document embeddings),
- * and cross-encoder re-ranking, visualised as a retrieval pipeline.
+ * V6 — LangGraph: the triage flow modelled as an explicit state machine of
+ * nodes and edges, with a conditional branch to the EMERGENCY override.
  * ==========================================================================*/
 
 const CHAT_ENDPOINT =
@@ -299,22 +299,30 @@ function InternalsTab({ turnCount, tokenEstimate, reasoningTrace, phase }) {
       </section>
 
       <section className="card">
-        <h3>Adaptive Agent Phase</h3>
-        <p className="card-sub">The agent advances through four phases as it gathers information.</p>
-        <div className="phase-track">
+        <h3>Agent State Machine <span className="tag-concept">LangGraph concept</span></h3>
+        <p className="card-sub">
+          Triage modelled as a graph of nodes and edges. The active node is highlighted; a
+          conditional edge can branch to the EMERGENCY override at any point.
+        </p>
+        <div className="statemachine">
           {PHASES.map((p, i) => (
-            <div key={p.key} className="phase-step">
-              <div className={`phase-pill ${phase === p.key ? 'phase-active' : ''}`}>
-                <span className="phase-num">{i + 1}</span>
-                <div>
-                  <div className="phase-label">{p.label}</div>
-                  <div className="phase-desc">{p.desc}</div>
-                </div>
+            <div key={p.key} className="sm-step">
+              <div className={`sm-node ${phase === p.key ? 'sm-node-active' : ''}`}>
+                <div className="sm-label">{p.label}</div>
+                <div className="sm-desc">{p.desc}</div>
               </div>
-              {i < PHASES.length - 1 && <div className="phase-arrow">→</div>}
+              {i < PHASES.length - 1 && <div className="sm-edge">→</div>}
             </div>
           ))}
         </div>
+        <div className="sm-branch">
+          <span className="sm-cond">conditional edge · safety rule match →</span>
+          <span className="sm-emergency">🔴 EMERGENCY (interrupt)</span>
+        </div>
+        <p className="card-sub" style={{ marginTop: 12, marginBottom: 0 }}>
+          Built with LangGraph-style nodes/edges + LCEL chains; each node may invoke tools
+          (RAG retrieval, structured-summary emitter) before transitioning.
+        </p>
       </section>
 
       <section className="card">

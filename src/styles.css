@@ -65,16 +65,18 @@ body {
 .reasoning-box { background: var(--surface-2); border-left: 4px solid var(--teal); border-radius: 8px; padding: 14px 16px; font-style: italic; font-size: 14px; line-height: 1.55; }
 .muted { color: #94a3b8; }
 
-/* Adaptive agent phase tracker */
-.phase-track { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
-.phase-step { display: flex; align-items: center; gap: 6px; }
-.phase-pill { display: flex; align-items: center; gap: 10px; background: var(--surface-2); border: 2px solid var(--border); border-radius: 10px; padding: 8px 12px; min-width: 150px; }
-.phase-active { border-color: var(--teal); background: rgba(13,148,136,0.08); box-shadow: 0 0 0 3px rgba(13,148,136,0.12); }
-.phase-num { width: 24px; height: 24px; border-radius: 50%; background: var(--navy); color: #fff; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; flex-shrink: 0; }
-.phase-active .phase-num { background: var(--teal); }
-.phase-label { font-weight: 700; font-size: 13.5px; }
-.phase-desc { font-size: 11px; color: var(--text-muted); }
-.phase-arrow { color: var(--text-muted); font-size: 18px; font-weight: 700; }
+/* LangGraph-style state machine (V6) */
+.tag-concept { font-size: 11px; font-weight: 700; background: #ede9fe; color: #6d28d9; padding: 2px 8px; border-radius: 6px; text-transform: uppercase; letter-spacing: 0.3px; }
+.statemachine { display: flex; align-items: stretch; flex-wrap: wrap; gap: 6px; }
+.sm-step { display: flex; align-items: center; gap: 6px; }
+.sm-node { background: var(--surface-2); border: 2px solid var(--border); border-radius: 10px; padding: 10px 14px; min-width: 130px; }
+.sm-node-active { border-color: var(--teal); background: rgba(13,148,136,0.08); box-shadow: 0 0 0 3px rgba(13,148,136,0.12); }
+.sm-label { font-weight: 700; font-size: 14px; }
+.sm-desc { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
+.sm-edge { color: var(--text-muted); font-size: 20px; font-weight: 700; }
+.sm-branch { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+.sm-cond { font-size: 12px; color: var(--text-muted); font-family: ui-monospace, monospace; }
+.sm-emergency { font-size: 13px; font-weight: 700; color: #ef4444; border: 2px dashed #ef4444; border-radius: 8px; padding: 4px 10px; }
 
 /* Empty states */
 .empty-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 56px 24px; text-align: center; color: var(--text-muted); box-shadow: var(--shadow); }
