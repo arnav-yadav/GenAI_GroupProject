@@ -34,3 +34,5 @@ proxy holding the API key is added in a later version.
 - **V8 — Safety + Summary:** hard-coded client-side emergency overrides (regex pre-check),
   the persistent red 999 alert banner, and the structured provider-ready Patient Summary tab
   with "Copy for Provider".
+- **V9 — Multi-Agent / MCP:** orchestrator + 3 specialist sub-agents (symptom, urgency,
+  summary) with A2A-style handoffs, shown in the AI Internals panel.

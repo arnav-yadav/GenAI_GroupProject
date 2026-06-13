@@ -2,8 +2,8 @@ import { useState, useRef, useEffect } from 'react'
 
 /* ============================================================================
  * Dr. Aria — AI Healthcare Triage Assistant
- * V8 — Safety + Summary: hard-coded client-side emergency guardrails, the red
- * alert banner, and the structured provider-ready Patient Summary tab.
+ * V9 — Multi-Agent / MCP: an orchestrator delegates to specialist sub-agents
+ * (symptom, urgency, summary) with A2A-style handoffs.
  * ==========================================================================*/
 
 const CONTEXT_WINDOW = 200000 // model context window (tokens) for the usage bar
@@ -96,6 +96,13 @@ const knowledgeBase = [
   { id: 'kb6', title: 'Paediatric Fever and Sepsis Protocol', source: 'NICE Guideline NG51 2023', keywords: ['fever', 'child', 'temperature', 'baby', 'infant', 'hot'], similarity: 0.85, chunk: 'Chunk 2 of 10 | 476 tokens', excerpt: 'Children under 3 months with fever above 38°C require emergency assessment. Non-blanching petechial or purpuric rash with fever in any age group is a medical emergency. Apply the NICE traffic light system for febrile illness stratification.' },
   { id: 'kb7', title: 'Mental Health Crisis Assessment', source: 'NHS Mental Health Crisis Care Standards 2023', keywords: ['mental', 'anxiety', 'panic', 'self harm', 'self-harm', 'suicidal', 'depressed'], similarity: 0.79, chunk: 'Chunk 5 of 12 | 521 tokens', excerpt: 'Active suicidal ideation with plan and intent requires emergency psychiatric assessment. Panic disorder with first presentation should be evaluated to exclude cardiac and respiratory causes. Crisis line referral is appropriate for patients expressing passive suicidal ideation without immediate risk.' },
   { id: 'kb8', title: 'Musculoskeletal Pain Stratification', source: 'RCGP MSK Clinical Pathway 2022', keywords: ['back', 'joint', 'muscle', 'arm pain', 'leg', 'knee', 'shoulder'], similarity: 0.74, chunk: 'Chunk 8 of 15 | 463 tokens', excerpt: 'Red flags for back pain (cauda equina syndrome) include saddle anaesthesia, bilateral leg weakness, and loss of bladder/bowel control — refer immediately. Non-specific low back pain without red flags is appropriate for self-management with physiotherapy referral if persistent.' },
+]
+
+// Multi-agent / MCP orchestration: specialist sub-agents the orchestrator delegates to
+const SUBAGENTS = [
+  { name: 'Symptom Agent', role: 'Extracts & normalises presenting symptoms from dialogue', phase: 'profiling' },
+  { name: 'Urgency Agent', role: 'Maps symptoms → triage tier using safety rules + guidelines', phase: 'assessment' },
+  { name: 'Summary Agent', role: 'Compiles the structured provider-ready PATIENT_SUMMARY', phase: 'assessment' },
 ]
 
 // Adaptive agent: the 4 phases of the triage interview
@@ -406,6 +413,19 @@ function InternalsTab({ turnCount, tokenEstimate, reasoningTrace, phase, pastSes
           Built with LangGraph-style nodes/edges + LCEL chains; each node may invoke tools
           (RAG retrieval, structured-summary emitter) before transitioning.
         </p>
+      </section>
+
+      <section className="card">
+        <h3>Multi-Agent Orchestration <span className="tag-concept">MCP concept</span></h3>
+        <p className="card-sub">An orchestrator delegates to specialist sub-agents with A2A handoffs. Active agents are highlighted.</p>
+        <div className="agents-grid">
+          {SUBAGENTS.map((a) => (
+            <div key={a.name} className={`agent-card ${phase === a.phase ? 'agent-active' : ''}`}>
+              <div className="agent-name">{a.name}</div>
+              <div className="agent-role">{a.role}</div>
+            </div>
+          ))}
+        </div>
       </section>
 
       <section className="card">

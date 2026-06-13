@@ -109,6 +109,13 @@ body {
 .sm-cond { font-size: 12px; color: var(--text-muted); font-family: ui-monospace, monospace; }
 .sm-emergency { font-size: 13px; font-weight: 700; color: #ef4444; border: 2px dashed #ef4444; border-radius: 8px; padding: 4px 10px; }
 
+/* Multi-agent orchestration (V9) */
+.agents-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; }
+.agent-card { background: var(--surface-2); border: 1px solid var(--border); border-left: 4px solid var(--border); border-radius: 10px; padding: 12px; }
+.agent-active { border-left-color: var(--teal); background: rgba(13,148,136,0.06); }
+.agent-name { font-weight: 700; font-size: 14px; }
+.agent-role { font-size: 12.5px; color: var(--text-muted); margin-top: 4px; line-height: 1.45; }
+
 /* Memory (V7) */
 .mem-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px; }
 .mem-block { background: var(--surface-2); border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; }
