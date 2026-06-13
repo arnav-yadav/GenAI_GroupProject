@@ -41,7 +41,38 @@ body {
 .tab:hover { color: #fff; }
 .tab-active { color: #fff; border-bottom-color: var(--teal); }
 
+.header-pill { margin-left: auto; font-size: 12px; font-weight: 700; color: #fff; padding: 4px 12px; border-radius: 999px; }
+
 .main { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+
+/* Emergency + urgency banners (V8) */
+.emergency-box { background: #ef4444; color: #fff; padding: 16px 20px; text-align: center; animation: epulse 1.6s ease-in-out infinite; }
+.emergency-title { font-size: 24px; font-weight: 800; letter-spacing: 0.5px; }
+.emergency-reason { font-size: 14px; margin-top: 4px; }
+@keyframes epulse { 0%,100% { box-shadow: inset 0 0 0 0 rgba(255,255,255,0); } 50% { box-shadow: inset 0 0 0 4px rgba(255,255,255,0.25); } }
+.urgency-banner { color: #fff; padding: 12px 20px; font-size: 14px; }
+
+/* Summary card (V8) */
+.summary-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 22px; box-shadow: var(--shadow); }
+.summary-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 18px; }
+.summary-head h2 { margin: 0; font-size: 18px; flex: 1; }
+.badge { color: #fff; font-weight: 700; font-size: 13px; padding: 5px 14px; border-radius: 999px; }
+.field { padding: 12px 0; border-bottom: 1px solid var(--border); }
+.field-label { font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-muted); font-weight: 700; margin-bottom: 4px; }
+.field-value { font-size: 15px; line-height: 1.5; }
+.sev-row { display: flex; align-items: center; gap: 12px; }
+.sev-num { font-weight: 700; font-size: 16px; min-width: 50px; }
+.sev-bar { flex: 1; height: 10px; background: var(--surface-2); border-radius: 999px; overflow: hidden; border: 1px solid var(--border); }
+.sev-fill { height: 100%; border-radius: 999px; transition: width 0.4s; }
+.tags { display: flex; flex-wrap: wrap; gap: 6px; }
+.tag { background: var(--surface-2); border: 1px solid var(--border); border-radius: 999px; padding: 3px 12px; font-size: 13px; }
+.action-box { border: 2px solid; border-radius: 12px; padding: 14px 16px; margin: 16px 0; }
+.action-label { font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px; font-weight: 800; margin-bottom: 4px; }
+.action-text { font-size: 16px; font-weight: 600; }
+.redflags { list-style: none; padding: 0; margin: 0; }
+.redflags li { display: flex; gap: 8px; align-items: flex-start; padding: 4px 0; font-size: 14.5px; }
+.summary-footer { margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--border); font-size: 12px; color: var(--text-muted); }
+.btn-sm { padding: 6px 12px; font-size: 13px; }
 
 /* Panels */
 .panel { padding: 20px; overflow-y: auto; }

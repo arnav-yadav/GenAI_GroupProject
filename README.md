@@ -31,3 +31,6 @@ proxy holding the API key is added in a later version.
   conditional branch to the EMERGENCY override; LCEL chains + tool calling per node.
 - **V7 — Memory:** short-term context-window tracking and long-term cross-session patient
   records persisted to `localStorage`.
+- **V8 — Safety + Summary:** hard-coded client-side emergency overrides (regex pre-check),
+  the persistent red 999 alert banner, and the structured provider-ready Patient Summary tab
+  with "Copy for Provider".

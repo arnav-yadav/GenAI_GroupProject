@@ -2,8 +2,8 @@ import { useState, useRef, useEffect } from 'react'
 
 /* ============================================================================
  * Dr. Aria — AI Healthcare Triage Assistant
- * V7 — Memory: short-term context window tracking + long-term cross-session
- * patient records persisted to localStorage.
+ * V8 — Safety + Summary: hard-coded client-side emergency guardrails, the red
+ * alert banner, and the structured provider-ready Patient Summary tab.
  * ==========================================================================*/
 
 const CONTEXT_WINDOW = 200000 // model context window (tokens) for the usage bar
@@ -67,6 +67,25 @@ Dr. Aria: "A spreading rash with fever can be serious. Does the rash look like s
 Be empathetic, concise, never alarmist unless warranted. Never diagnose. Always triage.
 `
 
+// Urgency tier metadata
+const URGENCY = {
+  EMERGENCY: { label: '🔴 EMERGENCY', short: 'Emergency', color: '#ef4444', action: 'Call 999 / 112 immediately' },
+  AE_TODAY: { label: '🟠 A&E TODAY', short: 'A&E Today', color: '#f97316', action: 'Attend A&E within hours' },
+  GP_URGENT: { label: '🟡 GP URGENT', short: 'GP Urgent', color: '#eab308', action: 'See a GP within 24 hours' },
+  GP_ROUTINE: { label: '🟢 GP ROUTINE', short: 'GP Routine', color: '#22c55e', action: 'Book a GP appointment this week' },
+  SELF_CARE: { label: '🔵 SELF-CARE', short: 'Self-care', color: '#3b82f6', action: 'Manage at home with monitoring' },
+}
+
+// SAFETY GUARDRAILS — client-side emergency patterns checked BEFORE the API call
+const emergencyPatterns = [
+  { test: /chest.{0,30}(arm|jaw|shoulder)|( arm|jaw|shoulder).{0,30}chest/i, reason: 'Chest pain spreading to arm/jaw/shoulder — possible cardiac emergency' },
+  { test: /(can'?t breathe|not breathing|struggling to breathe|difficulty breathing)/i, reason: 'Breathing difficulty — possible respiratory emergency' },
+  { test: /(worst headache|thunderclap|sudden.*severe.*head)/i, reason: 'Sudden severe headache — possible brain bleed' },
+  { test: /(face.{0,10}drop|arm.{0,10}weak|slurred.{0,10}speech)/i, reason: 'Possible stroke symptoms — act immediately' },
+  { test: /(unconscious|unresponsive|collapsed|not responding)/i, reason: 'Loss of consciousness — call emergency services' },
+  { test: /(non.?blanching|meningitis|purple.{0,15}rash)/i, reason: 'Possible meningococcal infection — call 999 now' },
+]
+
 // Simulated RAG knowledge base — keyword → guideline chunk mapping
 const knowledgeBase = [
   { id: 'kb1', title: 'Cardiac Emergency Triage Protocol', source: 'NHS England Clinical Guidelines 2023', keywords: ['chest', 'heart', 'cardiac', 'arm pain', 'jaw', 'palpitation'], similarity: 0.94, chunk: 'Chunk 4 of 11 | 487 tokens', excerpt: 'Chest pain with radiation to the arm, jaw, or shoulder, combined with diaphoresis or nausea, should be treated as a STEMI until proven otherwise. Immediate 999 activation is required. Do not delay for further assessment.' },
@@ -96,6 +115,7 @@ const SYLLABUS_CONCEPTS = [
   { name: 'Structured Output (JSON)', feature: 'PATIENT_SUMMARY block' },
   { name: 'AI Agent Pattern', feature: 'multi-phase adaptive questioning' },
   { name: 'Memory / Context Window', feature: 'full conversation history array' },
+  { name: 'Safety Guardrails', feature: 'hardcoded emergency overrides' },
   { name: 'RAG (simulated)', feature: 'knowledge base retrieval in Tab 4' },
 ]
 
@@ -109,6 +129,8 @@ export default function App() {
   const [ragDocs, setRagDocs] = useState([])
   const [tokenEstimate, setTokenEstimate] = useState(0)
   const [reasoningTrace, setReasoningTrace] = useState('')
+  const [emergencyAlert, setEmergencyAlert] = useState(null)
+  const [summaryTimestamp, setSummaryTimestamp] = useState(null)
   const [pastSessions, setPastSessions] = useState([]) // long-term memory
   const [input, setInput] = useState('')
   const [errorMsg, setErrorMsg] = useState(null)
@@ -167,6 +189,10 @@ export default function App() {
     if (!text || isLoading) return
     setErrorMsg(null)
 
+    // SAFETY GUARDRAIL — client-side emergency pre-check (before the API call)
+    const match = emergencyPatterns.find((p) => p.test.test(text))
+    if (match) setEmergencyAlert(match.reason)
+
     const newHistory = [...conversationHistory, { role: 'user', content: text }]
     setConversationHistory(newHistory)
     setInput('')
@@ -199,6 +225,7 @@ export default function App() {
           setPatientSummary(parsed)
           if (parsed.urgency_code) setUrgencyCode(parsed.urgency_code)
           if (parsed.reasoning_trace) setReasoningTrace(parsed.reasoning_trace)
+          setSummaryTimestamp(new Date().toLocaleString())
           persistSession(parsed) // commit to long-term memory
           hasSummary = true
         } catch (e) { /* malformed JSON — keep chatting */ }
@@ -225,12 +252,21 @@ export default function App() {
     setRagDocs([])
     setTokenEstimate(0)
     setReasoningTrace('')
+    setEmergencyAlert(null)
+    setSummaryTimestamp(null)
     setErrorMsg(null)
     setInput('')
   }
 
+  const showEmergency = urgencyCode === 'EMERGENCY' || !!emergencyAlert
+  const emergencyReason =
+    emergencyAlert ||
+    (patientSummary && urgencyCode === 'EMERGENCY' ? patientSummary.recommended_action : '') ||
+    'Potential life-threatening symptoms detected'
+
   const tabs = [
     { id: 'chat', label: 'Triage Chat' },
+    { id: 'summary', label: 'Patient Summary' },
     { id: 'internals', label: 'AI Internals' },
     { id: 'kb', label: 'Knowledge Base' },
   ]
@@ -244,6 +280,11 @@ export default function App() {
             <div className="brand-title">Dr. Aria</div>
             <div className="brand-sub">AI Healthcare Triage Assistant</div>
           </div>
+          {urgencyCode && (
+            <span className="header-pill" style={{ background: URGENCY[urgencyCode].color }}>
+              {URGENCY[urgencyCode].short}
+            </span>
+          )}
         </div>
         <nav className="tabs">
           {tabs.map((t) => (
@@ -256,7 +297,10 @@ export default function App() {
 
       <main className="main">
         {activeTab === 'chat' && (
-          <ChatTab {...{ scrollRef, conversationHistory, isLoading, input, setInput, sendMessage, newPatient, errorMsg }} />
+          <ChatTab {...{ scrollRef, conversationHistory, isLoading, input, setInput, sendMessage, newPatient, errorMsg, urgencyCode, showEmergency, emergencyReason }} />
+        )}
+        {activeTab === 'summary' && (
+          <SummaryTab patientSummary={patientSummary} urgencyCode={urgencyCode} timestamp={summaryTimestamp} />
         )}
         {activeTab === 'internals' && (
           <InternalsTab {...{ turnCount, tokenEstimate, reasoningTrace, phase, pastSessions }} />
@@ -269,9 +313,20 @@ export default function App() {
   )
 }
 
-function ChatTab({ scrollRef, conversationHistory, isLoading, input, setInput, sendMessage, newPatient, errorMsg }) {
+function ChatTab({ scrollRef, conversationHistory, isLoading, input, setInput, sendMessage, newPatient, errorMsg, urgencyCode, showEmergency, emergencyReason }) {
   return (
     <div className="chat-tab">
+      {showEmergency && (
+        <div className="emergency-box">
+          <div className="emergency-title">🚨 CALL 999 NOW</div>
+          <div className="emergency-reason">{emergencyReason}</div>
+        </div>
+      )}
+      {urgencyCode && urgencyCode !== 'EMERGENCY' && (
+        <div className="urgency-banner" style={{ background: URGENCY[urgencyCode].color }}>
+          <strong>{URGENCY[urgencyCode].label}</strong> — {URGENCY[urgencyCode].action}
+        </div>
+      )}
       <div className="messages" ref={scrollRef}>
         {conversationHistory.length === 0 && !isLoading && (
           <div className="welcome">
@@ -411,6 +466,106 @@ function ConfigItem({ k, v, note }) {
       <div className="config-k">{k}</div>
       <div className="config-v">{v}</div>
       {note && <div className="config-note">({note})</div>}
+    </div>
+  )
+}
+
+function SummaryTab({ patientSummary, urgencyCode, timestamp }) {
+  const [copied, setCopied] = useState(false)
+  if (!patientSummary) {
+    return (
+      <div className="panel">
+        <div className="empty-card">
+          <div className="empty-icon">🩺</div>
+          <p>Complete the triage interview to generate the clinical summary.</p>
+        </div>
+      </div>
+    )
+  }
+  const u = URGENCY[urgencyCode] || URGENCY[patientSummary.urgency_code] || URGENCY.GP_ROUTINE
+  const s = patientSummary
+
+  function copyForProvider() {
+    const txt = [
+      'CLINICAL TRIAGE SUMMARY — Generated by Dr. Aria AI',
+      timestamp ? `Generated: ${timestamp}` : '',
+      'For provider reference only — not a diagnosis.',
+      '',
+      `Urgency tier: ${s.urgency_tier || u.label}`,
+      `Presenting complaint: ${s.presenting_complaint || '—'}`,
+      `Duration: ${s.duration || '—'}`,
+      `Severity (0–10): ${s.severity_score ?? '—'}`,
+      `Associated symptoms: ${(s.associated_symptoms || []).join(', ') || '—'}`,
+      `Relevant history: ${s.relevant_history || '—'}`,
+      `Recommended action: ${s.recommended_action || u.action}`,
+      `Red flags to watch: ${(s.red_flags_to_watch || []).join('; ') || '—'}`,
+      `AI confidence: ${s.ai_confidence || '—'}`,
+    ].filter(Boolean).join('\n')
+    navigator.clipboard?.writeText(txt).then(() => { setCopied(true); setTimeout(() => setCopied(false), 2000) })
+  }
+
+  return (
+    <div className="panel">
+      <div className="summary-card">
+        <div className="summary-head">
+          <span className="badge" style={{ background: u.color }}>{u.label}</span>
+          <h2>Clinical Triage Summary</h2>
+          <button className="btn btn-ghost btn-sm" onClick={copyForProvider}>{copied ? 'Copied ✓' : 'Copy for Provider'}</button>
+        </div>
+
+        <Field label="Presenting complaint" value={s.presenting_complaint} />
+        <Field label="Duration" value={s.duration} />
+
+        <div className="field">
+          <div className="field-label">Severity</div>
+          <div className="field-value">
+            <div className="sev-row">
+              <span className="sev-num">{s.severity_score ?? 0}/10</span>
+              <div className="sev-bar"><div className="sev-fill" style={{ width: `${(s.severity_score || 0) * 10}%`, background: u.color }} /></div>
+            </div>
+          </div>
+        </div>
+
+        <div className="field">
+          <div className="field-label">Associated symptoms</div>
+          <div className="field-value">
+            {(s.associated_symptoms || []).length
+              ? <div className="tags">{s.associated_symptoms.map((t, i) => <span key={i} className="tag">{t}</span>)}</div>
+              : <span className="muted">None reported</span>}
+          </div>
+        </div>
+
+        <Field label="Relevant history" value={s.relevant_history} />
+
+        <div className="action-box" style={{ borderColor: u.color, background: `${u.color}14` }}>
+          <div className="action-label" style={{ color: u.color }}>Recommended action</div>
+          <div className="action-text">{s.recommended_action || u.action}</div>
+        </div>
+
+        <div className="field">
+          <div className="field-label">Red flags to watch</div>
+          <div className="field-value">
+            {(s.red_flags_to_watch || []).length
+              ? <ul className="redflags">{s.red_flags_to_watch.map((f, i) => <li key={i}><span>⚠️</span>{f}</li>)}</ul>
+              : <span className="muted">None specified</span>}
+          </div>
+        </div>
+
+        <Field label="AI confidence level" value={s.ai_confidence} />
+
+        <div className="summary-footer">
+          Generated by Dr. Aria AI • {timestamp || '—'} • For provider reference only — not a diagnosis.
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function Field({ label, value }) {
+  return (
+    <div className="field">
+      <div className="field-label">{label}</div>
+      <div className="field-value">{value ? value : <span className="muted">—</span>}</div>
     </div>
   )
 }
