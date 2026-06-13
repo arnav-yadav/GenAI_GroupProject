@@ -165,7 +165,8 @@ body {
 .welcome { text-align: center; max-width: 460px; margin: 40px auto; color: var(--text-muted); }
 .welcome .avatar-lg { margin: 0 auto 16px; }
 .welcome h2 { color: var(--text); margin: 0 0 8px; }
-.welcome p { font-size: 14px; line-height: 1.55; }
+.welcome p { font-size: 14px; line-height: 1.55; margin: 8px 0; }
+.welcome-hint { font-size: 13px; color: #94a3b8; font-style: italic; }
 
 .row { display: flex; gap: 8px; align-items: flex-end; }
 .row-user { justify-content: flex-end; }
@@ -194,7 +195,10 @@ body {
 
 @media (max-width: 640px) {
   .bubble { max-width: 86%; }
-  .header, .messages, .composer { padding-left: 14px; padding-right: 14px; }
+  .header, .messages, .composer, .panel { padding-left: 14px; padding-right: 14px; }
   .composer { flex-wrap: wrap; }
   .composer-input { flex-basis: 100%; }
+  .statemachine { flex-direction: column; align-items: stretch; }
+  .sm-step { flex-direction: column; align-items: stretch; }
+  .sm-edge { transform: rotate(90deg); align-self: center; }
 }

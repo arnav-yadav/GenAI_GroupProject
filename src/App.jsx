@@ -2,13 +2,19 @@ import { useState, useRef, useEffect } from 'react'
 
 /* ============================================================================
  * Dr. Aria — AI Healthcare Triage Assistant
- * V9 — Multi-Agent / MCP: an orchestrator delegates to specialist sub-agents
- * (symptom, urgency, summary) with A2A-style handoffs.
+ * V10 — Deployment & final polish: serverless proxy support, rate-limit/cache
+ * notes, and UI polish. End-to-end demonstration of all syllabus concepts:
+ * System Prompt · ChatML · Persona · Few-shot · Chain-of-Thought · Structured
+ * JSON output · Memory/context window · Multi-phase AI agent · Safety guardrails
+ * · RAG (simulated) · LangGraph state machine · Multi-agent (MCP).
  * ==========================================================================*/
 
 const CONTEXT_WINDOW = 200000 // model context window (tokens) for the usage bar
 const SESSIONS_KEY = 'aria_past_sessions'
 
+// Default endpoint works inside the Claude.ai artifact sandbox (request proxied).
+// For a real deployment set VITE_CHAT_ENDPOINT="/api/chat" to route through the
+// serverless proxy in /api/chat.js (which holds the API key). Body is identical.
 const CHAT_ENDPOINT =
   import.meta.env.VITE_CHAT_ENDPOINT || 'https://api.anthropic.com/v1/messages'
 
@@ -339,7 +345,8 @@ function ChatTab({ scrollRef, conversationHistory, isLoading, input, setInput, s
           <div className="welcome">
             <div className="avatar avatar-lg">DA</div>
             <h2>Hello, I'm Dr. Aria</h2>
-            <p>Tell me what's bothering you and I'll ask a few questions to help assess the right level of care.</p>
+            <p>Tell me what's bothering you and I'll ask a few questions to help assess the right level of care. I am <strong>not</strong> a substitute for professional medical advice.</p>
+            <p className="welcome-hint">Try: “I have chest pain” · “I've had a headache for 2 days” · “my child has a fever”</p>
           </div>
         )}
         {conversationHistory.map((msg, i) => (
@@ -475,6 +482,17 @@ function InternalsTab({ turnCount, tokenEstimate, reasoningTrace, phase, pastSes
       <section className="card">
         <h3>Last Reasoning Trace</h3>
         {reasoningTrace ? <div className="reasoning-box">{reasoningTrace}</div> : <p className="muted">No assessment yet.</p>}
+      </section>
+
+      <section className="card">
+        <h3>Deployment <span className="tag-concept">AWS / CI-CD</span></h3>
+        <p className="card-sub">Production-readiness notes for the deployed build.</p>
+        <div className="config-grid">
+          <ConfigItem k="API key" v="server-side" note="held in /api/chat proxy, never in the browser" />
+          <ConfigItem k="Rate limiting" v="per-IP" note="throttle requests at the edge / API gateway" />
+          <ConfigItem k="Caching" v="prompt cache" note="reuse system-prompt tokens across turns" />
+          <ConfigItem k="CI/CD" v="build → deploy" note="vite build → static assets + serverless fn" />
+        </div>
       </section>
     </div>
   )
