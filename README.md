@@ -29,3 +29,5 @@ proxy holding the API key is added in a later version.
   (hypothetical document embeddings), and cross-encoder re-ranking.
 - **V6 — LangGraph:** the triage flow as an explicit state machine (nodes/edges) with a
   conditional branch to the EMERGENCY override; LCEL chains + tool calling per node.
+- **V7 — Memory:** short-term context-window tracking and long-term cross-session patient
+  records persisted to `localStorage`.

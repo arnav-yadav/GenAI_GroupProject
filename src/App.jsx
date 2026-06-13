@@ -2,9 +2,12 @@ import { useState, useRef, useEffect } from 'react'
 
 /* ============================================================================
  * Dr. Aria — AI Healthcare Triage Assistant
- * V6 — LangGraph: the triage flow modelled as an explicit state machine of
- * nodes and edges, with a conditional branch to the EMERGENCY override.
+ * V7 — Memory: short-term context window tracking + long-term cross-session
+ * patient records persisted to localStorage.
  * ==========================================================================*/
+
+const CONTEXT_WINDOW = 200000 // model context window (tokens) for the usage bar
+const SESSIONS_KEY = 'aria_past_sessions'
 
 const CHAT_ENDPOINT =
   import.meta.env.VITE_CHAT_ENDPOINT || 'https://api.anthropic.com/v1/messages'
@@ -92,6 +95,7 @@ const SYLLABUS_CONCEPTS = [
   { name: 'Chain-of-Thought', feature: '5-step internal reasoning protocol' },
   { name: 'Structured Output (JSON)', feature: 'PATIENT_SUMMARY block' },
   { name: 'AI Agent Pattern', feature: 'multi-phase adaptive questioning' },
+  { name: 'Memory / Context Window', feature: 'full conversation history array' },
   { name: 'RAG (simulated)', feature: 'knowledge base retrieval in Tab 4' },
 ]
 
@@ -105,6 +109,7 @@ export default function App() {
   const [ragDocs, setRagDocs] = useState([])
   const [tokenEstimate, setTokenEstimate] = useState(0)
   const [reasoningTrace, setReasoningTrace] = useState('')
+  const [pastSessions, setPastSessions] = useState([]) // long-term memory
   const [input, setInput] = useState('')
   const [errorMsg, setErrorMsg] = useState(null)
   const scrollRef = useRef(null)
@@ -114,6 +119,27 @@ export default function App() {
   useEffect(() => {
     if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight
   }, [conversationHistory, isLoading])
+
+  // Long-term memory: load past triage sessions on mount
+  useEffect(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem(SESSIONS_KEY) || '[]')
+      if (Array.isArray(saved)) setPastSessions(saved)
+    } catch (e) { /* ignore */ }
+  }, [])
+
+  function persistSession(summary) {
+    const record = {
+      complaint: summary.presenting_complaint || 'Unspecified',
+      tier: summary.urgency_tier || summary.urgency_code || '',
+      at: new Date().toLocaleString(),
+    }
+    setPastSessions((prev) => {
+      const next = [record, ...prev].slice(0, 20)
+      try { localStorage.setItem(SESSIONS_KEY, JSON.stringify(next)) } catch (e) { /* ignore */ }
+      return next
+    })
+  }
 
   // RAG retrieval: match guideline keywords against the full conversation
   function updateRag(history) {
@@ -173,6 +199,7 @@ export default function App() {
           setPatientSummary(parsed)
           if (parsed.urgency_code) setUrgencyCode(parsed.urgency_code)
           if (parsed.reasoning_trace) setReasoningTrace(parsed.reasoning_trace)
+          persistSession(parsed) // commit to long-term memory
           hasSummary = true
         } catch (e) { /* malformed JSON — keep chatting */ }
         replyText = replyText.replace(/<PATIENT_SUMMARY>[\s\S]*?<\/PATIENT_SUMMARY>/, '').trim()
@@ -232,7 +259,7 @@ export default function App() {
           <ChatTab {...{ scrollRef, conversationHistory, isLoading, input, setInput, sendMessage, newPatient, errorMsg }} />
         )}
         {activeTab === 'internals' && (
-          <InternalsTab {...{ turnCount, tokenEstimate, reasoningTrace, phase }} />
+          <InternalsTab {...{ turnCount, tokenEstimate, reasoningTrace, phase, pastSessions }} />
         )}
         {activeTab === 'kb' && (
           <KnowledgeTab ragDocs={ragDocs} conversationHistory={conversationHistory} />
@@ -278,11 +305,12 @@ function ChatTab({ scrollRef, conversationHistory, isLoading, input, setInput, s
   )
 }
 
-function InternalsTab({ turnCount, tokenEstimate, reasoningTrace, phase }) {
+function InternalsTab({ turnCount, tokenEstimate, reasoningTrace, phase, pastSessions = [] }) {
   const [copied, setCopied] = useState(false)
   function copyPrompt() {
     navigator.clipboard?.writeText(SYSTEM_PROMPT).then(() => { setCopied(true); setTimeout(() => setCopied(false), 2000) })
   }
+  const ctxPct = Math.min(100, (tokenEstimate / CONTEXT_WINDOW) * 100)
   return (
     <div className="panel internals">
       <section className="card">
@@ -323,6 +351,30 @@ function InternalsTab({ turnCount, tokenEstimate, reasoningTrace, phase }) {
           Built with LangGraph-style nodes/edges + LCEL chains; each node may invoke tools
           (RAG retrieval, structured-summary emitter) before transitioning.
         </p>
+      </section>
+
+      <section className="card">
+        <h3>Memory <span className="tag-concept">Memory systems</span></h3>
+        <p className="card-sub">Short-term memory is the live conversation; long-term memory persists past triage sessions.</p>
+        <div className="mem-grid">
+          <div className="mem-block">
+            <div className="mem-head">Short-term · context window</div>
+            <div className="ctx-bar"><div className="ctx-fill" style={{ width: `${ctxPct}%` }} /></div>
+            <div className="mem-foot">{tokenEstimate.toLocaleString()} / {CONTEXT_WINDOW.toLocaleString()} tokens · {turnCount} turns held in context</div>
+          </div>
+          <div className="mem-block">
+            <div className="mem-head">Long-term · past sessions ({pastSessions.length})</div>
+            {pastSessions.length === 0 ? (
+              <div className="mem-foot">No saved sessions yet. Completed triages persist across reloads.</div>
+            ) : (
+              <ul className="mem-list">
+                {pastSessions.slice(0, 4).map((s, i) => (
+                  <li key={i}><span className="mem-tier">{s.tier}</span> {s.complaint} <span className="mem-at">· {s.at}</span></li>
+                ))}
+              </ul>
+            )}
+          </div>
+        </div>
       </section>
 
       <section className="card">
