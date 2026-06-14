@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from 'react'
+import { knowledgeBase } from '../shared/knowledge.js'
 
 /* ============================================================================
  * Dr. Aria — AI Healthcare Triage Assistant
@@ -10,24 +11,32 @@ import { useState, useRef, useEffect } from 'react'
  * ==========================================================================*/
 
 const CONTEXT_WINDOW = 200000 // model context window (tokens) for the usage bar
-const SESSIONS_KEY = 'aria_past_sessions'
+const SESSIONS_KEY = 'aria_past_sessions' // long-term memory / chat history (closed sessions)
+const CURRENT_KEY = 'aria_current_session' // the live session — persists across reload
+const newId = () => globalThis.crypto?.randomUUID?.() || `sess-${Date.now()}-${Math.round(Math.random() * 1e6)}`
 
-// Default endpoint works inside the Claude.ai artifact sandbox (request proxied).
-// For a real deployment set VITE_CHAT_ENDPOINT="/api/chat" to route through the
-// serverless proxy in /api/chat.js (which holds the API key). Body is identical.
-const CHAT_ENDPOINT =
-  import.meta.env.VITE_CHAT_ENDPOINT || 'https://api.anthropic.com/v1/messages'
+// The frontend calls our Node/Express backend, which does the RAG (Gemini
+// embeddings → Qdrant search) and generation (Gemini), keeping keys server-side.
+// In dev, Vite proxies /api → http://localhost:8787 (see vite.config.js).
+const CHAT_ENDPOINT = import.meta.env.VITE_CHAT_ENDPOINT || '/api/chat'
 
-const MODEL = 'claude-sonnet-4-20250514'
+const MODEL = 'gemini-2.5-flash'
 
 const SYSTEM_PROMPT = `
-You are Dr. Aria, an AI medical triage assistant. You are NOT a substitute for medical care.
+You are Dr. Aria, an AI medical triage assistant for patients in Bengaluru, Karnataka, India.
+You are NOT a substitute for medical care. You triage; you never diagnose.
+
+## LOCAL EMERGENCY CONTACTS (India / Bengaluru) — use these exact numbers:
+- 112 — unified national emergency number
+- 108 — free emergency ambulance (Arogya Kavacha, Karnataka)
+- 14416 — Tele-MANAS national mental-health helpline
+Never invent or guess other numbers. "Hospital" means a hospital casualty / emergency department; "clinic/OPD" means a doctor's outpatient clinic.
 
 ## TRIAGE TIERS — always classify into exactly one:
-🔴 EMERGENCY: Call 999/112 — life-threatening
-🟠 A&E TODAY: Go to A&E within hours
-🟡 GP URGENT: See GP within 24 hours
-🟢 GP ROUTINE: Book GP this week
+🔴 EMERGENCY: Call 108/112 now — life-threatening
+🟠 HOSPITAL NOW: Go to a hospital casualty within hours
+🟡 DOCTOR URGENT: See a doctor within 24 hours
+🟢 CLINIC ROUTINE: Visit a clinic (OPD) this week
 🔵 SELF-CARE: Manage at home with monitoring
 
 ## HARD-CODED SAFETY RULES — NEVER override, always → EMERGENCY:
@@ -37,6 +46,8 @@ You are Dr. Aria, an AI medical triage assistant. You are NOT a substitute for m
 - Difficulty breathing + blue lips/fingertips
 - Severe allergic reaction + throat swelling
 - Uncontrolled bleeding, loss of consciousness, active seizure
+- Snakebite (common in/around Karnataka) → keep limb still, no tourniquet, reach casualty
+- Dengue warning signs: high fever + severe abdominal pain, persistent vomiting, or bleeding gums
 
 ## QUESTIONING PROTOCOL — ask 4–7 questions total, one or two at a time:
 Phase 1 — Intake: primary complaint, when started
@@ -47,16 +58,16 @@ Phase 4 — Assessment: give urgency tier, specific action, red flags to watch
 ## FEW-SHOT EXAMPLES:
 Patient: "I have chest pain"
 Dr. Aria: "This needs careful assessment. Is the pain spreading to your arm, jaw, or shoulder? Are you sweating or nauseous?"
-→ If yes to spreading pain: 🔴 EMERGENCY immediately
+→ If yes to spreading pain: 🔴 EMERGENCY immediately — call 108
 
 Patient: "I have a headache"
 Dr. Aria: "I'll help assess this. On a scale of 1–10, how severe is it? Did it start suddenly or gradually? Is this the worst headache of your life?"
 → sudden + worst ever: 🔴 EMERGENCY (subarachnoid haemorrhage risk)
 → gradual, 4/10, no fever, no red flags: 🔵 SELF-CARE
 
-Patient: "I have a high fever and rash spreading across my body"
-Dr. Aria: "A spreading rash with fever can be serious. Does the rash look like small purple or red spots that don't fade when pressed? Do you have neck stiffness or sensitivity to light?"
-→ non-blanching rash: 🔴 EMERGENCY (meningococcal)
+Patient: "I've had a high fever for 3 days with body ache and a rash"
+Dr. Aria: "In Bengaluru this time of year, dengue is worth ruling out. Do you have severe tummy pain, persistent vomiting, or any bleeding from the gums or nose? Does the rash fade when you press it?"
+→ dengue warning signs or non-blanching rash: 🔴 EMERGENCY / 🟠 HOSPITAL NOW
 
 ## CHAIN-OF-THOUGHT — reason through this before every response:
 1. What symptoms have been reported?
@@ -67,41 +78,43 @@ Dr. Aria: "A spreading rash with fever can be serious. Does the rash look like s
 
 ## FINAL ASSESSMENT FORMAT — when you have enough info, end response with:
 <PATIENT_SUMMARY>
-{"presenting_complaint":"","duration":"","severity_score":0,"associated_symptoms":[],"relevant_history":"","urgency_tier":"🔴 EMERGENCY | 🟠 A&E TODAY | 🟡 GP URGENT | 🟢 GP ROUTINE | 🔵 SELF-CARE","urgency_code":"EMERGENCY|AE_TODAY|GP_URGENT|GP_ROUTINE|SELF_CARE","recommended_action":"","red_flags_to_watch":[],"ai_confidence":"HIGH|MEDIUM|LOW","reasoning_trace":"brief internal reasoning used to reach this assessment"}
+{"presenting_complaint":"","duration":"","severity_score":0,"associated_symptoms":[],"relevant_history":"","urgency_tier":"🔴 EMERGENCY | 🟠 HOSPITAL NOW | 🟡 DOCTOR URGENT | 🟢 CLINIC ROUTINE | 🔵 SELF-CARE","urgency_code":"EMERGENCY|AE_TODAY|GP_URGENT|GP_ROUTINE|SELF_CARE","recommended_action":"","red_flags_to_watch":[],"ai_confidence":"HIGH|MEDIUM|LOW","reasoning_trace":"brief internal reasoning used to reach this assessment"}
 </PATIENT_SUMMARY>
 
 Be empathetic, concise, never alarmist unless warranted. Never diagnose. Always triage.
 `
 
-// Urgency tier metadata
+// REGION CONFIG — centralised so the app can be re-pointed to another region by
+// hand-curating one object. NOTE: emergency numbers are deliberately hard-coded
+// (never auto-looked-up by the LLM) — a hallucinated emergency number is unsafe.
+const REGION = {
+  name: 'Bengaluru, Karnataka, India',
+  emergency: '112', // unified national emergency (ERSS)
+  ambulance: '108', // free emergency ambulance — "Arogya Kavacha" in Karnataka
+  teleManas: '14416', // national mental-health helpline (Tele-MANAS)
+  emergencyDept: 'hospital casualty / emergency department',
+  primaryCare: 'a doctor or clinic (OPD)',
+}
+
+// Urgency tier metadata (India / Bengaluru)
 const URGENCY = {
-  EMERGENCY: { label: '🔴 EMERGENCY', short: 'Emergency', color: '#ef4444', action: 'Call 999 / 112 immediately' },
-  AE_TODAY: { label: '🟠 A&E TODAY', short: 'A&E Today', color: '#f97316', action: 'Attend A&E within hours' },
-  GP_URGENT: { label: '🟡 GP URGENT', short: 'GP Urgent', color: '#eab308', action: 'See a GP within 24 hours' },
-  GP_ROUTINE: { label: '🟢 GP ROUTINE', short: 'GP Routine', color: '#22c55e', action: 'Book a GP appointment this week' },
+  EMERGENCY: { label: '🔴 EMERGENCY', short: 'Emergency', color: '#ef4444', action: `Call 108 (ambulance) or 112 now — get to ${REGION.emergencyDept}` },
+  AE_TODAY: { label: '🟠 HOSPITAL NOW', short: 'Hospital', color: '#f97316', action: `Go to ${REGION.emergencyDept} within hours` },
+  GP_URGENT: { label: '🟡 DOCTOR URGENT', short: 'Urgent', color: '#eab308', action: 'See a doctor within 24 hours' },
+  GP_ROUTINE: { label: '🟢 CLINIC ROUTINE', short: 'Routine', color: '#22c55e', action: `Visit ${REGION.primaryCare} this week` },
   SELF_CARE: { label: '🔵 SELF-CARE', short: 'Self-care', color: '#3b82f6', action: 'Manage at home with monitoring' },
 }
 
 // SAFETY GUARDRAILS — client-side emergency patterns checked BEFORE the API call
 const emergencyPatterns = [
-  { test: /chest.{0,30}(arm|jaw|shoulder)|( arm|jaw|shoulder).{0,30}chest/i, reason: 'Chest pain spreading to arm/jaw/shoulder — possible cardiac emergency' },
-  { test: /(can'?t breathe|not breathing|struggling to breathe|difficulty breathing)/i, reason: 'Breathing difficulty — possible respiratory emergency' },
-  { test: /(worst headache|thunderclap|sudden.*severe.*head)/i, reason: 'Sudden severe headache — possible brain bleed' },
-  { test: /(face.{0,10}drop|arm.{0,10}weak|slurred.{0,10}speech)/i, reason: 'Possible stroke symptoms — act immediately' },
-  { test: /(unconscious|unresponsive|collapsed|not responding)/i, reason: 'Loss of consciousness — call emergency services' },
-  { test: /(non.?blanching|meningitis|purple.{0,15}rash)/i, reason: 'Possible meningococcal infection — call 999 now' },
-]
-
-// Simulated RAG knowledge base — keyword → guideline chunk mapping
-const knowledgeBase = [
-  { id: 'kb1', title: 'Cardiac Emergency Triage Protocol', source: 'NHS England Clinical Guidelines 2023', keywords: ['chest', 'heart', 'cardiac', 'arm pain', 'jaw', 'palpitation'], similarity: 0.94, chunk: 'Chunk 4 of 11 | 487 tokens', excerpt: 'Chest pain with radiation to the arm, jaw, or shoulder, combined with diaphoresis or nausea, should be treated as a STEMI until proven otherwise. Immediate 999 activation is required. Do not delay for further assessment.' },
-  { id: 'kb2', title: 'Stroke Recognition — FAST & Beyond', source: 'NICE Guideline NG128 2023', keywords: ['face', 'arm weak', 'speech', 'slurred', 'headache', 'sudden'], similarity: 0.91, chunk: 'Chunk 2 of 9 | 512 tokens', excerpt: 'Use the FAST assessment: Facial drooping, Arm weakness, Speech difficulty, Time to call 999. Patients presenting with sudden severe headache ("thunderclap") without trauma should be urgently assessed for subarachnoid haemorrhage.' },
-  { id: 'kb3', title: 'Headache Red Flags & Neurological Triage', source: 'NICE Guideline CG150 2022', keywords: ['headache', 'head pain', 'migraine', 'worst', 'sudden'], similarity: 0.88, chunk: 'Chunk 1 of 7 | 431 tokens', excerpt: 'Red flag headaches requiring emergency referral include: thunderclap onset, worst ever headache, associated with fever and neck stiffness, headache with focal neurology. Gradual onset with typical migraine features and no red flags may be managed in primary care.' },
-  { id: 'kb4', title: 'Respiratory Distress Triage Guidelines', source: 'BTS Emergency Oxygen Guidelines 2023', keywords: ['breathing', 'breath', 'breathe', 'chest tight', 'wheeze', 'oxygen'], similarity: 0.96, chunk: 'Chunk 3 of 8 | 502 tokens', excerpt: 'Patients unable to complete sentences due to breathlessness, SpO2 below 92%, or with cyanosis require immediate emergency response. Triage to emergency services immediately. Assess for anaphylaxis, PE, and acute severe asthma.' },
-  { id: 'kb5', title: 'Acute Abdominal Pain Assessment', source: 'RCGP Clinical Guidelines 2022', keywords: ['stomach', 'abdominal', 'belly', 'abdomen', 'nausea', 'vomiting'], similarity: 0.82, chunk: 'Chunk 6 of 14 | 498 tokens', excerpt: 'Peritonitis signs (board-like rigidity, rebound tenderness) and pulsatile abdominal mass require emergency referral. Fever with right iliac fossa tenderness warrants urgent surgical assessment. Mild, non-specific abdominal discomfort with normal vitals may be managed with watchful waiting.' },
-  { id: 'kb6', title: 'Paediatric Fever and Sepsis Protocol', source: 'NICE Guideline NG51 2023', keywords: ['fever', 'child', 'temperature', 'baby', 'infant', 'hot'], similarity: 0.85, chunk: 'Chunk 2 of 10 | 476 tokens', excerpt: 'Children under 3 months with fever above 38°C require emergency assessment. Non-blanching petechial or purpuric rash with fever in any age group is a medical emergency. Apply the NICE traffic light system for febrile illness stratification.' },
-  { id: 'kb7', title: 'Mental Health Crisis Assessment', source: 'NHS Mental Health Crisis Care Standards 2023', keywords: ['mental', 'anxiety', 'panic', 'self harm', 'self-harm', 'suicidal', 'depressed'], similarity: 0.79, chunk: 'Chunk 5 of 12 | 521 tokens', excerpt: 'Active suicidal ideation with plan and intent requires emergency psychiatric assessment. Panic disorder with first presentation should be evaluated to exclude cardiac and respiratory causes. Crisis line referral is appropriate for patients expressing passive suicidal ideation without immediate risk.' },
-  { id: 'kb8', title: 'Musculoskeletal Pain Stratification', source: 'RCGP MSK Clinical Pathway 2022', keywords: ['back', 'joint', 'muscle', 'arm pain', 'leg', 'knee', 'shoulder'], similarity: 0.74, chunk: 'Chunk 8 of 15 | 463 tokens', excerpt: 'Red flags for back pain (cauda equina syndrome) include saddle anaesthesia, bilateral leg weakness, and loss of bladder/bowel control — refer immediately. Non-specific low back pain without red flags is appropriate for self-management with physiotherapy referral if persistent.' },
+  { test: /chest.{0,30}(arm|jaw|shoulder)|( arm|jaw|shoulder).{0,30}chest/i, reason: 'Chest pain spreading to arm/jaw/shoulder — possible cardiac emergency. Call 108/112 now.' },
+  { test: /(can'?t breathe|not breathing|struggling to breathe|difficulty breathing)/i, reason: 'Breathing difficulty — possible respiratory emergency. Call 108/112 now.' },
+  { test: /(worst headache|thunderclap|sudden.*severe.*head)/i, reason: 'Sudden severe headache — possible brain bleed. Call 108/112 now.' },
+  { test: /(face.{0,10}drop|arm.{0,10}weak|slurred.{0,10}speech)/i, reason: 'Possible stroke symptoms (FAST) — call 108/112 immediately.' },
+  { test: /(unconscious|unresponsive|collapsed|not responding)/i, reason: 'Loss of consciousness — call 108 ambulance immediately.' },
+  { test: /(non.?blanching|meningitis|purple.{0,15}rash)/i, reason: 'Non-blanching rash with fever — possible meningococcal/severe infection. Call 108/112 now.' },
+  { test: /(snake.{0,10}bite|snakebite)/i, reason: 'Snakebite — call 108 and reach hospital casualty fast. Keep the limb still; do NOT apply a tourniquet or cut the wound.' },
+  { test: /(bleeding gums|blood.{0,10}vomit|vomiting blood|black stool)/i, reason: 'Bleeding signs with fever can be dengue warning signs — go to hospital casualty now (call 108).' },
 ]
 
 // Multi-agent / MCP orchestration: specialist sub-agents the orchestrator delegates to
@@ -132,6 +145,36 @@ const SYLLABUS_CONCEPTS = [
   { name: 'RAG (simulated)', feature: 'knowledge base retrieval in Tab 4' },
 ]
 
+// Sample triage case for the "Load sample" button — lets reviewers see every
+// feature (summary, RAG, reasoning, memory) without a live API round-trip.
+// Dengue is seasonally relevant to Bengaluru.
+const DEMO = {
+  conversation: [
+    { role: 'user', content: "I've had a high fever for 3 days with bad body ache and a rash." },
+    { role: 'assistant', content: "I'm sorry you're feeling so rough. In Bengaluru at this time of year, dengue is worth ruling out. On a scale of 1–10, how bad is the fever and body ache — and do you have any severe abdominal pain, persistent vomiting, or bleeding from the gums or nose?" },
+    { role: 'user', content: "The body ache is about 7/10. I've had some abdominal pain, and my gums bled a little when I brushed today." },
+    { role: 'assistant', content: "Thank you. A high fever with bleeding gums and abdominal pain can be dengue warning signs, so this needs same-day assessment rather than waiting it out. Please go to a hospital casualty today for a dengue test (NS1/serology) and a platelet count. Keep sipping fluids, and avoid ibuprofen or aspirin in the meantime." },
+  ],
+  summary: {
+    presenting_complaint: 'High fever with body ache and a spreading rash',
+    duration: '3 days',
+    severity_score: 7,
+    associated_symptoms: ['Body ache', 'Mild abdominal pain', 'Bleeding gums', 'Skin rash'],
+    relevant_history: 'No known chronic illness. Lives in Bengaluru (seasonal dengue / chikungunya).',
+    urgency_tier: '🟠 HOSPITAL NOW',
+    urgency_code: 'AE_TODAY',
+    recommended_action: 'Attend a hospital casualty today for dengue assessment — NS1 / dengue serology and a platelet count. Maintain oral fluids; avoid NSAIDs / aspirin.',
+    red_flags_to_watch: ['Severe or worsening abdominal pain', 'Persistent vomiting', 'Bleeding from gums, nose, or skin', 'Lethargy or restlessness', 'Cold, clammy skin'],
+    ai_confidence: 'MEDIUM',
+    reasoning_trace: 'Fever >2 days with body ache and rash in a dengue-endemic area (Bengaluru) raises dengue suspicion. Bleeding gums and abdominal pain are recognised dengue warning signs (NVBDCP), which warrant same-day hospital assessment rather than routine primary care. No features of shock or respiratory distress yet, so HOSPITAL NOW (A&E today) rather than EMERGENCY.',
+  },
+  sessions: [
+    { id: 'demo-1', title: 'Chest pain radiating to left arm', complaint: 'Chest pain radiating to left arm', tier: '🔴 EMERGENCY', urgencyCode: 'EMERGENCY', at: '13 Jun 2026, 21:40' },
+    { id: 'demo-2', title: 'Persistent headache, 2 days', complaint: 'Persistent headache, 2 days', tier: '🟢 CLINIC ROUTINE', urgencyCode: 'GP_ROUTINE', at: '12 Jun 2026, 18:05' },
+    { id: 'demo-3', title: 'Ankle sprain after a fall', complaint: 'Ankle sprain after a fall', tier: '🟡 DOCTOR URGENT', urgencyCode: 'GP_URGENT', at: '11 Jun 2026, 09:15' },
+  ],
+}
+
 export default function App() {
   const [conversationHistory, setConversationHistory] = useState([])
   const [patientSummary, setPatientSummary] = useState(null)
@@ -140,11 +183,14 @@ export default function App() {
   const [isLoading, setIsLoading] = useState(false)
   const [activeTab, setActiveTab] = useState('chat')
   const [ragDocs, setRagDocs] = useState([])
+  const [ragInfo, setRagInfo] = useState(null) // real advanced-RAG metadata from the backend
   const [tokenEstimate, setTokenEstimate] = useState(0)
   const [reasoningTrace, setReasoningTrace] = useState('')
   const [emergencyAlert, setEmergencyAlert] = useState(null)
   const [summaryTimestamp, setSummaryTimestamp] = useState(null)
-  const [pastSessions, setPastSessions] = useState([]) // long-term memory
+  const [pastSessions, setPastSessions] = useState([]) // long-term memory / history
+  const [sessionId, setSessionId] = useState(null)
+  const [sidebarOpen, setSidebarOpen] = useState(() => (typeof window !== 'undefined' ? window.innerWidth > 900 : true))
   const [input, setInput] = useState('')
   const [errorMsg, setErrorMsg] = useState(null)
   const scrollRef = useRef(null)
@@ -155,36 +201,109 @@ export default function App() {
     if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight
   }, [conversationHistory, isLoading])
 
-  // Long-term memory: load past triage sessions on mount
+  // Cursor-reactive UI: page glow follows the pointer; cards catch a soft sheen
+  useEffect(() => {
+    function onMove(e) {
+      const root = document.documentElement
+      root.style.setProperty('--mx', e.clientX + 'px')
+      root.style.setProperty('--my', e.clientY + 'px')
+      const card = e.target.closest && e.target.closest('.card, .kb-card, .summary-card')
+      if (card) {
+        const r = card.getBoundingClientRect()
+        card.style.setProperty('--gx', e.clientX - r.left + 'px')
+        card.style.setProperty('--gy', e.clientY - r.top + 'px')
+      }
+    }
+    window.addEventListener('pointermove', onMove)
+    return () => window.removeEventListener('pointermove', onMove)
+  }, [])
+
+  // On mount: load history (long-term memory) + restore the live session (reload persistence)
   useEffect(() => {
     try {
       const saved = JSON.parse(localStorage.getItem(SESSIONS_KEY) || '[]')
       if (Array.isArray(saved)) setPastSessions(saved)
     } catch (e) { /* ignore */ }
+    try {
+      const cur = JSON.parse(localStorage.getItem(CURRENT_KEY) || 'null')
+      if (cur && Array.isArray(cur.conversationHistory) && cur.conversationHistory.length) {
+        setConversationHistory(cur.conversationHistory)
+        setPatientSummary(cur.patientSummary || null)
+        setUrgencyCode(cur.urgencyCode || null)
+        setPhase(cur.phase || 'intake')
+        setReasoningTrace(cur.reasoningTrace || '')
+        setRagDocs(cur.ragDocs || [])
+        setTokenEstimate(cur.tokenEstimate || 0)
+        setSummaryTimestamp(cur.summaryTimestamp || null)
+        setSessionId(cur.sessionId || null)
+      }
+    } catch (e) { /* ignore */ }
   }, [])
 
-  function persistSession(summary) {
-    const record = {
-      complaint: summary.presenting_complaint || 'Unspecified',
-      tier: summary.urgency_tier || summary.urgency_code || '',
-      at: new Date().toLocaleString(),
-    }
-    setPastSessions((prev) => {
-      const next = [record, ...prev].slice(0, 20)
-      try { localStorage.setItem(SESSIONS_KEY, JSON.stringify(next)) } catch (e) { /* ignore */ }
-      return next
-    })
+  // Persist the live session on every change so a reload restores it
+  useEffect(() => {
+    if (!conversationHistory.length) { try { localStorage.removeItem(CURRENT_KEY) } catch (e) {} ; return }
+    const snap = { sessionId, conversationHistory, patientSummary, urgencyCode, phase, reasoningTrace, ragDocs, tokenEstimate, summaryTimestamp }
+    try { localStorage.setItem(CURRENT_KEY, JSON.stringify(snap)) } catch (e) { /* ignore */ }
+  }, [sessionId, conversationHistory, patientSummary, urgencyCode, phase, reasoningTrace, ragDocs, tokenEstimate, summaryTimestamp])
+
+  function persistHistory(list) {
+    try { localStorage.setItem(SESSIONS_KEY, JSON.stringify(list)) } catch (e) { /* ignore */ }
   }
 
-  // RAG retrieval: match guideline keywords against the full conversation
-  function updateRag(history) {
+  const closeSidebarOnMobile = () => { if (typeof window !== 'undefined' && window.innerWidth <= 900) setSidebarOpen(false) }
+
+  // Snapshot the current (open) session into a history entry (newest first, cap 30)
+  function archiveCurrent(list) {
+    if (!conversationHistory.length) return list
+    const firstUser = conversationHistory.find((m) => m.role === 'user')?.content || ''
+    const title = patientSummary?.presenting_complaint || firstUser.slice(0, 70) || 'Triage session'
+    const entry = {
+      id: sessionId || newId(),
+      at: summaryTimestamp || new Date().toLocaleString(),
+      title,
+      complaint: title,
+      tier: urgencyCode ? URGENCY[urgencyCode].label : '—',
+      urgencyCode,
+      conversation: conversationHistory,
+      patientSummary,
+      reasoningTrace,
+      summaryTimestamp,
+    }
+    const deduped = (list || []).filter((s) => s.id !== entry.id)
+    return [entry, ...deduped].slice(0, 30)
+  }
+
+  // Reopen a past session (archives the current one first, then pulls the target out)
+  function loadSession(id) {
+    const archived = archiveCurrent(pastSessions)
+    const target = archived.find((s) => s.id === id)
+    const remaining = archived.filter((s) => s.id !== id)
+    setPastSessions(remaining); persistHistory(remaining)
+    setActiveTab('chat'); closeSidebarOnMobile()
+    if (!target || !(target.conversation || []).length) return // demo/summary-only entry
+    setConversationHistory(target.conversation)
+    setPatientSummary(target.patientSummary || null)
+    setUrgencyCode(target.urgencyCode || null)
+    setReasoningTrace(target.reasoningTrace || '')
+    setSummaryTimestamp(target.summaryTimestamp || null)
+    setPhase(target.patientSummary ? 'assessment' : 'intake')
+    setRagDocs(retrieve(target.conversation))
+    setRagInfo(null)
+    setTokenEstimate(Math.round((SYSTEM_PROMPT.length + JSON.stringify(target.conversation).length) / 4))
+    setEmergencyAlert(null)
+    setSessionId(target.id)
+  }
+
+  // RAG retrieval: match guideline keywords against the full conversation.
+  // Pure function so the same result can both update the UI and ground the prompt.
+  function retrieve(history) {
     const text = history.map((m) => m.content).join(' ').toLowerCase()
-    if (!text.trim()) return setRagDocs([])
-    const matched = knowledgeBase
+    if (!text.trim()) return []
+    return knowledgeBase
       .filter((doc) => doc.keywords.some((k) => text.includes(k.toLowerCase())))
       .sort((a, b) => b.similarity - a.similarity)
       .slice(0, 5)
-    setRagDocs(matched)
   }
 
   // Adaptive agent: derive the current phase from turn count + summary presence
@@ -197,8 +316,8 @@ export default function App() {
     return 'assessment'
   }
 
-  async function sendMessage() {
-    const text = input.trim()
+  async function sendMessage(presetText) {
+    const text = (typeof presetText === 'string' ? presetText : input).trim()
     if (!text || isLoading) return
     setErrorMsg(null)
 
@@ -206,50 +325,59 @@ export default function App() {
     const match = emergencyPatterns.find((p) => p.test.test(text))
     if (match) setEmergencyAlert(match.reason)
 
+    if (!sessionId) setSessionId(newId()) // start a session id for history/persistence
+
     const newHistory = [...conversationHistory, { role: 'user', content: text }]
     setConversationHistory(newHistory)
     setInput('')
     setIsLoading(true)
-    updateRag(newHistory) // retrieve relevant guidelines as the patient describes symptoms
+
+    // Optimistic: show keyword-matched guidelines instantly; the backend's real
+    // vector-search results replace these when the reply returns.
+    setRagDocs(retrieve(newHistory))
 
     try {
       const response = await fetch(CHAT_ENDPOINT, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          model: MODEL,
-          max_tokens: 1000,
-          temperature: 0.3,
-          top_p: 0.95,
-          system: SYSTEM_PROMPT,
-          messages: newHistory,
-        }),
+        body: JSON.stringify({ messages: newHistory, system: SYSTEM_PROMPT }),
       })
       const data = await response.json()
-      if (data.error) throw new Error(data.error.message || JSON.stringify(data.error))
-      let replyText = data.content[0].text
+      if (data.error) throw new Error(data.error)
+      let replyText = data.text || ''
+      const retrieved = Array.isArray(data.retrieved) ? data.retrieved : []
+      setRagInfo(data.rag || null)
 
-      // STRUCTURED OUTPUT — extract & parse the <PATIENT_SUMMARY> JSON block
+      // STRUCTURED OUTPUT — parse the <PATIENT_SUMMARY> JSON block if present.
       let hasSummary = false
-      const m = replyText.match(/<PATIENT_SUMMARY>([\s\S]*?)<\/PATIENT_SUMMARY>/)
-      if (m) {
-        try {
-          const parsed = JSON.parse(m[1].trim())
-          setPatientSummary(parsed)
-          if (parsed.urgency_code) setUrgencyCode(parsed.urgency_code)
-          if (parsed.reasoning_trace) setReasoningTrace(parsed.reasoning_trace)
-          setSummaryTimestamp(new Date().toLocaleString())
-          persistSession(parsed) // commit to long-term memory
-          hasSummary = true
-        } catch (e) { /* malformed JSON — keep chatting */ }
-        replyText = replyText.replace(/<PATIENT_SUMMARY>[\s\S]*?<\/PATIENT_SUMMARY>/, '').trim()
+      const tagIdx = replyText.indexOf('<PATIENT_SUMMARY>')
+      if (tagIdx !== -1) {
+        const block = replyText.match(/<PATIENT_SUMMARY>([\s\S]*?)<\/PATIENT_SUMMARY>/)
+        if (block) {
+          try {
+            const parsed = JSON.parse(block[1].trim())
+            setPatientSummary(parsed)
+            if (parsed.urgency_code) setUrgencyCode(parsed.urgency_code)
+            if (parsed.reasoning_trace) setReasoningTrace(parsed.reasoning_trace)
+            setSummaryTimestamp(new Date().toLocaleString())
+            hasSummary = true
+          } catch (e) { /* malformed/truncated JSON — keep chatting */ }
+        }
+        // Always strip from the tag onward so raw JSON never shows, even if truncated.
+        replyText = replyText.slice(0, tagIdx).trim()
+      }
+      if (!replyText) {
+        replyText = hasSummary
+          ? "I've completed your assessment — please see the recommendation above and the Patient Summary tab for the full provider handoff."
+          : 'Thank you. Could you tell me a little more about your symptoms?'
       }
 
       const updated = [...newHistory, { role: 'assistant', content: replyText }]
       setConversationHistory(updated)
       setTokenEstimate(Math.round((SYSTEM_PROMPT.length + JSON.stringify(updated).length) / 4))
       setPhase(detectPhase(updated, hasSummary)) // advance the agent state machine
-      updateRag(updated) // re-retrieve over the full conversation incl. Dr. Aria's reply
+      // show the backend's real vector-search results (fallback to keyword match)
+      setRagDocs(retrieved.length ? retrieved : retrieve(updated))
     } catch (err) {
       setErrorMsg(`Could not reach Dr. Aria: ${err.message}`)
     } finally {
@@ -258,17 +386,45 @@ export default function App() {
   }
 
   function newPatient() {
+    // archive the current chat into history before clearing
+    const next = archiveCurrent(pastSessions)
+    setPastSessions(next); persistHistory(next)
     setConversationHistory([])
     setPatientSummary(null)
     setUrgencyCode(null)
     setPhase('intake')
     setRagDocs([])
+    setRagInfo(null)
     setTokenEstimate(0)
     setReasoningTrace('')
     setEmergencyAlert(null)
     setSummaryTimestamp(null)
     setErrorMsg(null)
     setInput('')
+    setSessionId(null)
+    try { localStorage.removeItem(CURRENT_KEY) } catch (e) { /* ignore */ }
+    closeSidebarOnMobile()
+  }
+
+  // Load a fully-populated sample case so reviewers can see every feature
+  // (Patient Summary, RAG retrieval, reasoning trace, memory) without a live call.
+  function loadDemo() {
+    const convo = DEMO.conversation
+    setConversationHistory(convo)
+    setPatientSummary(DEMO.summary)
+    setUrgencyCode(DEMO.summary.urgency_code)
+    setReasoningTrace(DEMO.summary.reasoning_trace)
+    setPhase('assessment')
+    setRagDocs(retrieve(convo))
+    setRagInfo(null)
+    setTokenEstimate(Math.round((SYSTEM_PROMPT.length + JSON.stringify(convo).length) / 4))
+    setSummaryTimestamp(new Date().toLocaleString())
+    setEmergencyAlert(null)
+    setErrorMsg(null)
+    setInput('')
+    setSessionId(newId())
+    setPastSessions((prev) => (prev.length ? prev : DEMO.sessions))
+    setActiveTab('chat')
   }
 
   const showEmergency = urgencyCode === 'EMERGENCY' || !!emergencyAlert
@@ -278,39 +434,92 @@ export default function App() {
     'Potential life-threatening symptoms detected'
 
   const tabs = [
-    { id: 'chat', label: 'Triage Chat' },
-    { id: 'summary', label: 'Patient Summary' },
-    { id: 'internals', label: 'AI Internals' },
-    { id: 'kb', label: 'Knowledge Base' },
+    { id: 'chat', label: 'Triage Chat', group: 'patient' },
+    { id: 'summary', label: 'Patient Summary', group: 'patient' },
+    { id: 'internals', label: 'AI Internals', group: 'dev' },
+    { id: 'kb', label: 'Knowledge Base', group: 'dev' },
   ]
 
+  // sidebar history: reopenable past chats + the current (open) one pinned at top
+  const reopenable = pastSessions.filter((s) => (s.conversation || []).length)
+  const currentTitle = conversationHistory.length
+    ? (patientSummary?.presenting_complaint || conversationHistory.find((m) => m.role === 'user')?.content || 'Current triage').slice(0, 60)
+    : null
+
   return (
-    <div className="app">
+    <div className="shell">
+      <aside className={`sidebar ${sidebarOpen ? '' : 'sidebar-collapsed'}`}>
+        <div className="sidebar-top">
+          <div className="sidebar-brand"><Logo size={26} /><span>Dr. Aria</span></div>
+          <button className="icon-btn" onClick={() => setSidebarOpen(false)} title="Collapse sidebar" aria-label="Collapse sidebar">‹‹</button>
+        </div>
+        <button className="new-chat-btn" onClick={newPatient}>＋&nbsp; New chat</button>
+        <div className="sidebar-label">Recent</div>
+        <div className="sidebar-list">
+          {currentTitle && (
+            <div className="sidebar-item sidebar-item-active" onClick={closeSidebarOnMobile} title="Current chat">
+              <span className="hi-dot" style={{ background: urgencyCode ? URGENCY[urgencyCode].color : 'var(--accent)' }} />
+              <span className="hi-title">{currentTitle}</span>
+              <span className="sidebar-now">now</span>
+            </div>
+          )}
+          {!currentTitle && reopenable.length === 0 && <div className="sidebar-empty">No chats yet. Start describing symptoms.</div>}
+          {reopenable.map((s) => (
+            <button key={s.id} className="sidebar-item" onClick={() => loadSession(s.id)}>
+              <span className="hi-dot" style={{ background: s.urgencyCode ? URGENCY[s.urgencyCode].color : 'var(--ink-mute)' }} />
+              <span className="hi-title">{s.title || s.complaint}</span>
+              <span className="hi-at">{s.at}</span>
+            </button>
+          ))}
+        </div>
+      </aside>
+
+      {sidebarOpen && <div className="sidebar-backdrop" onClick={() => setSidebarOpen(false)} aria-hidden="true" />}
+
+      <div className="app">
+        <div className="grain" aria-hidden="true" />
+      <div className="bg-motifs" aria-hidden="true">
+        {/* faint line-art stethoscope watermark (Lucide, MIT) */}
+        <svg className="motif motif-stetho" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.05" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M4.8 2.3A.3.3 0 1 0 5 2H4a2 2 0 0 0-2 2v5a6 6 0 0 0 6 6 6 6 0 0 0 6-6V4a2 2 0 0 0-2-2h-1a.2.2 0 1 0 .3.3" />
+          <path d="M8 15v1a6 6 0 0 0 6 6 6 6 0 0 0 6-6v-4" />
+          <circle cx="20" cy="10" r="2" />
+        </svg>
+      </div>
       <header className="header">
         <div className="header-brand">
-          <div className="avatar">DA</div>
-          <div>
+          <button className="icon-btn sidebar-toggle" onClick={() => setSidebarOpen((v) => !v)} title="Toggle sidebar" aria-label="Toggle sidebar">☰</button>
+          <Logo />
+          <div className="brand-text">
             <div className="brand-title">Dr. Aria</div>
-            <div className="brand-sub">AI Healthcare Triage Assistant</div>
+            <div className="brand-sub">AI Healthcare Triage · Bengaluru, India</div>
           </div>
           {urgencyCode && (
-            <span className="header-pill" style={{ background: URGENCY[urgencyCode].color }}>
+            <span className="header-pill" style={{ '--pill': URGENCY[urgencyCode].color }}>
+              <span className="header-pill-dot" />
               {URGENCY[urgencyCode].short}
             </span>
           )}
         </div>
         <nav className="tabs">
-          {tabs.map((t) => (
-            <button key={t.id} className={`tab ${activeTab === t.id ? 'tab-active' : ''}`} onClick={() => setActiveTab(t.id)}>
-              {t.label}
-            </button>
+          {tabs.map((t, i) => (
+            <span key={t.id} className="tab-wrap">
+              {t.group === 'dev' && tabs[i - 1]?.group !== 'dev' && (
+                <span className="tab-divider" title="Developer / educational view — not shown to patients">
+                  Behind the scenes
+                </span>
+              )}
+              <button className={`tab ${activeTab === t.id ? 'tab-active' : ''} ${t.group === 'dev' ? 'tab-dev' : ''}`} onClick={() => setActiveTab(t.id)}>
+                {t.label}
+              </button>
+            </span>
           ))}
         </nav>
       </header>
 
       <main className="main">
         {activeTab === 'chat' && (
-          <ChatTab {...{ scrollRef, conversationHistory, isLoading, input, setInput, sendMessage, newPatient, errorMsg, urgencyCode, showEmergency, emergencyReason }} />
+          <ChatTab {...{ scrollRef, conversationHistory, isLoading, input, setInput, sendMessage, errorMsg, urgencyCode, showEmergency, emergencyReason, phase, ragDocs, setActiveTab, loadDemo }} />
         )}
         {activeTab === 'summary' && (
           <SummaryTab patientSummary={patientSummary} urgencyCode={urgencyCode} timestamp={summaryTimestamp} />
@@ -319,57 +528,169 @@ export default function App() {
           <InternalsTab {...{ turnCount, tokenEstimate, reasoningTrace, phase, pastSessions }} />
         )}
         {activeTab === 'kb' && (
-          <KnowledgeTab ragDocs={ragDocs} conversationHistory={conversationHistory} />
+          <KnowledgeTab ragDocs={ragDocs} conversationHistory={conversationHistory} ragInfo={ragInfo} />
         )}
       </main>
+      </div>
     </div>
   )
 }
 
-function ChatTab({ scrollRef, conversationHistory, isLoading, input, setInput, sendMessage, newPatient, errorMsg, urgencyCode, showEmergency, emergencyReason }) {
+// Editorial mark — ECG pulse in a soft warm-clinical disc (matches favicon)
+function Logo({ size = 40 }) {
+  return (
+    <svg className="logo" width={size} height={size} viewBox="0 0 64 64" role="img" aria-label="Dr. Aria">
+      <defs>
+        <linearGradient id="ariaLogo" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0" stopColor="#2f8a76" />
+          <stop offset="1" stopColor="#1f6f5c" />
+        </linearGradient>
+      </defs>
+      <circle cx="32" cy="32" r="30" fill="url(#ariaLogo)" />
+      <polyline points="12,34 24,34 27,34 29,28 31,34 33,18 35,46 37,30 39,34 52,34"
+        fill="none" stroke="#fdfbf6" strokeWidth="3.4" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  )
+}
+
+const SUGGESTIONS = [
+  'I have chest pain',
+  "I've had a headache for 2 days",
+  'My child has a high fever',
+  'High fever with body ache and a rash',
+]
+
+function ChatTab({ scrollRef, conversationHistory, isLoading, input, setInput, sendMessage, errorMsg, urgencyCode, showEmergency, emergencyReason, phase, ragDocs, setActiveTab, loadDemo }) {
+  const empty = conversationHistory.length === 0 && !isLoading
+  const taRef = useRef(null)
+  // auto-grow the textarea (and reset when input clears after send)
+  useEffect(() => {
+    const ta = taRef.current
+    if (!ta) return
+    ta.style.height = 'auto'
+    ta.style.height = Math.min(ta.scrollHeight, 140) + 'px'
+  }, [input])
   return (
     <div className="chat-tab">
       {showEmergency && (
-        <div className="emergency-box">
-          <div className="emergency-title">🚨 CALL 999 NOW</div>
-          <div className="emergency-reason">{emergencyReason}</div>
+        <div className="emergency-box" role="alert">
+          <div className="emergency-mark">!</div>
+          <div>
+            <div className="emergency-title">Call 108 / 112 now</div>
+            <div className="emergency-reason">{emergencyReason}</div>
+          </div>
         </div>
       )}
-      {urgencyCode && urgencyCode !== 'EMERGENCY' && (
-        <div className="urgency-banner" style={{ background: URGENCY[urgencyCode].color }}>
-          <strong>{URGENCY[urgencyCode].label}</strong> — {URGENCY[urgencyCode].action}
+
+      <div className="chat-layout">
+        <div className="chat-main">
+          <div className="transcript" ref={scrollRef}>
+            {empty && (
+              <div className="welcome">
+                <Logo size={68} />
+                <h2 className="welcome-title">Hello, I'm Dr. Aria.</h2>
+                <p className="welcome-lede">
+                  Tell me what's bothering you and I'll ask a few questions to help assess the
+                  right level of care. I'm <em>not</em> a substitute for professional medical advice.
+                </p>
+                <div className="suggestions">
+                  {SUGGESTIONS.map((s) => (
+                    <button key={s} className="suggestion" onClick={() => sendMessage(s)}>{s}</button>
+                  ))}
+                </div>
+                <button className="demo-link" onClick={loadDemo}>▸ Load a sample case (no API needed)</button>
+              </div>
+            )}
+
+            {conversationHistory.map((msg, i) => (
+              <div key={i} className={`turn ${msg.role === 'user' ? 'turn-user' : 'turn-ai'}`}>
+                <div className="turn-label">{msg.role === 'user' ? 'You' : 'Dr. Aria'}</div>
+                <div className="turn-body">{msg.content}</div>
+              </div>
+            ))}
+
+            {isLoading && (
+              <div className="turn turn-ai">
+                <div className="turn-label">Dr. Aria</div>
+                <div className="turn-body typing"><span></span><span></span><span></span></div>
+              </div>
+            )}
+          </div>
+
+          {errorMsg && <div className="error-bar">{errorMsg}</div>}
+
+          <div className="composer">
+            <textarea
+              ref={taRef}
+              className="composer-input"
+              rows={1}
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key !== 'Enter') return
+                if (e.shiftKey || e.metaKey || e.ctrlKey) {
+                  // newline on Shift+Enter, ⌘+Enter (Mac), Ctrl+Enter (Windows) — inserted
+                  // explicitly so it's reliable across browsers/platforms
+                  e.preventDefault()
+                  const ta = e.target
+                  const s = ta.selectionStart, en = ta.selectionEnd
+                  const next = input.slice(0, s) + '\n' + input.slice(en)
+                  setInput(next)
+                  requestAnimationFrame(() => { ta.selectionStart = ta.selectionEnd = s + 1 })
+                } else {
+                  e.preventDefault()
+                  sendMessage()
+                }
+              }}
+              placeholder="Describe your symptoms…"
+              disabled={isLoading}
+            />
+            <button className="btn btn-send" onClick={sendMessage} disabled={isLoading || !input.trim()}>Send</button>
+          </div>
+          <p className="disclaimer">For triage guidance only — not a diagnosis. In an emergency call 108 / 112.</p>
         </div>
-      )}
-      <div className="messages" ref={scrollRef}>
-        {conversationHistory.length === 0 && !isLoading && (
-          <div className="welcome">
-            <div className="avatar avatar-lg">DA</div>
-            <h2>Hello, I'm Dr. Aria</h2>
-            <p>Tell me what's bothering you and I'll ask a few questions to help assess the right level of care. I am <strong>not</strong> a substitute for professional medical advice.</p>
-            <p className="welcome-hint">Try: “I have chest pain” · “I've had a headache for 2 days” · “my child has a fever”</p>
+
+        {/* Marginalia: the AI's live working notes alongside the conversation */}
+        <aside className="chat-margin" aria-label="Triage notes">
+          <div className="margin-block">
+            <div className="margin-head">Triage status</div>
+            <ol className="margin-phases">
+              {PHASES.map((p) => (
+                <li key={p.key} className={phase === p.key ? 'mp-active' : ''}>
+                  <span className="mp-dot" />{p.label}
+                </li>
+              ))}
+            </ol>
+            {urgencyCode && (
+              <div className="margin-urgency" style={{ '--u': URGENCY[urgencyCode].color }}>
+                <span className="mu-dot" />{URGENCY[urgencyCode].label}
+                <div className="mu-action">{URGENCY[urgencyCode].action}</div>
+              </div>
+            )}
           </div>
-        )}
-        {conversationHistory.map((msg, i) => (
-          <div key={i} className={`row ${msg.role === 'user' ? 'row-user' : 'row-ai'}`}>
-            {msg.role === 'assistant' && <div className="avatar avatar-sm">DA</div>}
-            <div className={`bubble ${msg.role === 'user' ? 'bubble-user' : 'bubble-ai'}`}>{msg.content}</div>
+
+          <div className="margin-block">
+            <div className="margin-head">Retrieved guidelines</div>
+            {ragDocs.length === 0 ? (
+              <p className="margin-empty">Sources appear here as you describe symptoms.</p>
+            ) : (
+              <ol className="margin-cites">
+                {ragDocs.map((d, i) => (
+                  <li key={d.id}>
+                    <button className="cite" onClick={() => setActiveTab('kb')}>
+                      <span className="cite-n">{i + 1}</span>
+                      <span className="cite-body">
+                        <span className="cite-title">{d.title}</span>
+                        <span className="cite-meta">{d.source.split('·')[0].trim()} · {d.similarity.toFixed(2)}</span>
+                      </span>
+                    </button>
+                  </li>
+                ))}
+              </ol>
+            )}
           </div>
-        ))}
-        {isLoading && (
-          <div className="row row-ai">
-            <div className="avatar avatar-sm">DA</div>
-            <div className="bubble bubble-ai typing"><span></span><span></span><span></span></div>
-          </div>
-        )}
+        </aside>
       </div>
-      {errorMsg && <div className="error-bar">{errorMsg}</div>}
-      <div className="composer">
-        <input className="composer-input" value={input} onChange={(e) => setInput(e.target.value)}
-          onKeyDown={(e) => e.key === 'Enter' && sendMessage()} placeholder="Describe your symptoms…" disabled={isLoading} />
-        <button className="btn btn-send" onClick={sendMessage} disabled={isLoading || !input.trim()}>Send</button>
-        <button className="btn btn-ghost" onClick={newPatient}>New Patient</button>
-      </div>
-      <p className="disclaimer">For triage guidance only — not a medical diagnosis. In an emergency call 999.</p>
     </div>
   )
 }
@@ -382,6 +703,12 @@ function InternalsTab({ turnCount, tokenEstimate, reasoningTrace, phase, pastSes
   const ctxPct = Math.min(100, (tokenEstimate / CONTEXT_WINDOW) * 100)
   return (
     <div className="panel internals">
+      <div className="panel-intro">
+        <div className="intro-eyebrow">Behind the scenes</div>
+        <h2 className="intro-title">AI Internals</h2>
+        <p className="intro-sub">The GenAI techniques powering Dr. Aria — model configuration, the agent graph, memory, retrieval, and the live system prompt.</p>
+      </div>
+
       <section className="card">
         <h3>Model Configuration</h3>
         <div className="config-grid">
@@ -405,8 +732,11 @@ function InternalsTab({ turnCount, tokenEstimate, reasoningTrace, phase, pastSes
           {PHASES.map((p, i) => (
             <div key={p.key} className="sm-step">
               <div className={`sm-node ${phase === p.key ? 'sm-node-active' : ''}`}>
-                <div className="sm-label">{p.label}</div>
-                <div className="sm-desc">{p.desc}</div>
+                <span className="sm-num">{i + 1}</span>
+                <div>
+                  <div className="sm-label">{p.label}</div>
+                  <div className="sm-desc">{p.desc}</div>
+                </div>
               </div>
               {i < PHASES.length - 1 && <div className="sm-edge">→</div>}
             </div>
@@ -544,55 +874,59 @@ function SummaryTab({ patientSummary, urgencyCode, timestamp }) {
 
   return (
     <div className="panel">
-      <div className="summary-card">
+      <div className="summary-card" style={{ '--u': u.color }}>
         <div className="summary-head">
-          <span className="badge" style={{ background: u.color }}>{u.label}</span>
-          <h2>Clinical Triage Summary</h2>
+          <div>
+            <div className="summary-eyebrow">Clinical Triage Summary</div>
+            <h2>Provider Handoff</h2>
+          </div>
           <button className="btn btn-ghost btn-sm" onClick={copyForProvider}>{copied ? 'Copied ✓' : 'Copy for Provider'}</button>
         </div>
 
-        <Field label="Presenting complaint" value={s.presenting_complaint} />
-        <Field label="Duration" value={s.duration} />
+        {/* headline verdict — the key output */}
+        <div className="verdict">
+          <div className="verdict-top">
+            <span className="badge" style={{ background: u.color }}>{u.label}</span>
+            {s.ai_confidence && <span className="verdict-conf">AI confidence&nbsp;<b>{s.ai_confidence}</b></span>}
+          </div>
+          <div className="verdict-action">{s.recommended_action || u.action}</div>
+        </div>
+
+        <div className="summary-grid">
+          <Field label="Presenting complaint" value={s.presenting_complaint} />
+          <Field label="Duration" value={s.duration} />
+        </div>
 
         <div className="field">
           <div className="field-label">Severity</div>
-          <div className="field-value">
+          {s.severity_score ? (
             <div className="sev-row">
-              <span className="sev-num">{s.severity_score ?? 0}/10</span>
-              <div className="sev-bar"><div className="sev-fill" style={{ width: `${(s.severity_score || 0) * 10}%`, background: u.color }} /></div>
+              <span className="sev-num">{s.severity_score}<span className="sev-den">/10</span></span>
+              <div className="sev-bar"><div className="sev-fill" style={{ width: `${s.severity_score * 10}%`, background: u.color }} /></div>
             </div>
-          </div>
+          ) : (
+            <span className="muted">Not assessed (emergency reached before severity was scored)</span>
+          )}
         </div>
 
         <div className="field">
           <div className="field-label">Associated symptoms</div>
-          <div className="field-value">
-            {(s.associated_symptoms || []).length
-              ? <div className="tags">{s.associated_symptoms.map((t, i) => <span key={i} className="tag">{t}</span>)}</div>
-              : <span className="muted">None reported</span>}
-          </div>
+          {(s.associated_symptoms || []).length
+            ? <div className="tags">{s.associated_symptoms.map((t, i) => <span key={i} className="tag">{t}</span>)}</div>
+            : <span className="muted">None reported</span>}
         </div>
 
         <Field label="Relevant history" value={s.relevant_history} />
 
-        <div className="action-box" style={{ borderColor: u.color, background: `${u.color}14` }}>
-          <div className="action-label" style={{ color: u.color }}>Recommended action</div>
-          <div className="action-text">{s.recommended_action || u.action}</div>
-        </div>
-
         <div className="field">
           <div className="field-label">Red flags to watch</div>
-          <div className="field-value">
-            {(s.red_flags_to_watch || []).length
-              ? <ul className="redflags">{s.red_flags_to_watch.map((f, i) => <li key={i}><span>⚠️</span>{f}</li>)}</ul>
-              : <span className="muted">None specified</span>}
-          </div>
+          {(s.red_flags_to_watch || []).length
+            ? <ul className="redflags">{s.red_flags_to_watch.map((f, i) => <li key={i}><span className="rf-icon">⚠</span>{f}</li>)}</ul>
+            : <span className="muted">None specified</span>}
         </div>
 
-        <Field label="AI confidence level" value={s.ai_confidence} />
-
         <div className="summary-footer">
-          Generated by Dr. Aria AI • {timestamp || '—'} • For provider reference only — not a diagnosis.
+          Generated by Dr. Aria AI · {timestamp || '—'} · For provider reference only — not a diagnosis.
         </div>
       </div>
     </div>
@@ -608,7 +942,7 @@ function Field({ label, value }) {
   )
 }
 
-function KnowledgeTab({ ragDocs, conversationHistory }) {
+function KnowledgeTab({ ragDocs, conversationHistory, ragInfo }) {
   const hasConversation = conversationHistory.length > 0
   function simColor(s) {
     if (s >= 0.9) return '#22c55e'
@@ -616,48 +950,58 @@ function KnowledgeTab({ ragDocs, conversationHistory }) {
     return '#94a3b8'
   }
 
-  // Advanced RAG pipeline (simulated): rewrite the raw query, build a HyDE
-  // hypothetical answer, then re-rank candidate chunks by similarity.
+  // Prefer the backend's REAL advanced-RAG values; fall back to a simulated
+  // illustration when running offline / from the demo.
   const lastUser = [...conversationHistory].reverse().find((m) => m.role === 'user')
   const rawQuery = lastUser ? lastUser.content : ''
   const convText = conversationHistory.map((m) => m.content).join(' ').toLowerCase()
   const matchedTerms = [...new Set(
     knowledgeBase.flatMap((d) => d.keywords).filter((k) => convText.includes(k.toLowerCase()))
   )].slice(0, 8)
-  const rewrittenQuery = matchedTerms.length
-    ? `clinical triage guidelines for: ${matchedTerms.join(', ')}`
-    : ''
-  const hydeDoc = ragDocs.length
-    ? `A patient presenting with ${matchedTerms.slice(0, 3).join(', ') || 'these symptoms'} should be assessed for ${ragDocs[0].title.toLowerCase()} and triaged accordingly.`
-    : ''
+  const isReal = !!ragInfo
+  const rewrittenQuery = ragInfo?.rewrittenQuery
+    || (matchedTerms.length ? `clinical triage guidelines for: ${matchedTerms.join(', ')}` : '')
+  const hydeDoc = ragInfo?.hypothetical
+    || (ragDocs.length ? `A patient presenting with ${matchedTerms.slice(0, 3).join(', ') || 'these symptoms'} should be assessed for ${ragDocs[0].title.toLowerCase()} and triaged accordingly.` : '')
+  const rerankNote = isReal
+    ? `${ragInfo.candidates || ragDocs.length} candidates re-ranked by ${ragInfo.reranked ? 'an LLM cross-encoder' : 'vector score'}; top 3 injected into the prompt ↓`
+    : `${ragDocs.length} candidate chunk${ragDocs.length === 1 ? '' : 's'} re-scored by relevance; top 3 injected into the prompt ↓`
 
   return (
     <div className="panel">
-      <div className="kb-header">
-        <h2>RAG: Retrieval-Augmented Generation</h2>
-        <p className="card-sub">
-          In production, symptom keywords would be embedded and matched against a vector database
-          (ChromaDB / Pinecone). Showing simulated retrieval for demonstration.
+      <div className="panel-intro">
+        <div className="intro-eyebrow">Behind the scenes · RAG</div>
+        <h2 className="intro-title">Retrieval-Augmented Generation</h2>
+        <p className="intro-sub">
+          The conversation is embedded with Gemini and matched against a <b>Qdrant vector database</b>;
+          the <b>top 3 chunks are injected into Dr. Aria's prompt</b> to ground her triage. (If the
+          backend is offline, it falls back to lexical keyword matching.)
         </p>
       </div>
 
       {hasConversation && (
-        <div className="rag-pipeline">
-          <div className="pipe-step">
-            <div className="pipe-tag">1 · Query Rewriting</div>
-            <div className="pipe-from">“{rawQuery || '—'}”</div>
-            <div className="pipe-arrow-v">↓</div>
-            <div className="pipe-to">{rewrittenQuery || '—'}</div>
+        <>
+          <div className="pipe-banner">
+            Retrieval pipeline
+            <span className={`pipe-mode ${isReal ? 'pipe-live' : ''}`}>{isReal ? '● live' : 'illustrative (offline)'}</span>
           </div>
-          <div className="pipe-step">
-            <div className="pipe-tag">2 · HyDE — Hypothetical Document</div>
-            <div className="pipe-hyde">{hydeDoc || 'Awaiting symptoms…'}</div>
+          <div className="rag-pipeline">
+            <div className="pipe-step">
+              <div className="pipe-tag">1 · Query Rewriting</div>
+              <div className="pipe-from">“{rawQuery || '—'}”</div>
+              <div className="pipe-arrow-v">↓</div>
+              <div className="pipe-to">{rewrittenQuery || '—'}</div>
+            </div>
+            <div className="pipe-step">
+              <div className="pipe-tag">2 · HyDE — Hypothetical Document</div>
+              <div className="pipe-hyde">{hydeDoc || 'Awaiting symptoms…'}</div>
+            </div>
+            <div className="pipe-step">
+              <div className="pipe-tag">3 · Re-ranking</div>
+              <div className="pipe-note">{rerankNote}</div>
+            </div>
           </div>
-          <div className="pipe-step">
-            <div className="pipe-tag">3 · Cross-Encoder Re-ranking</div>
-            <div className="pipe-note">{ragDocs.length} candidate chunk{ragDocs.length === 1 ? '' : 's'} re-scored and ordered by relevance ↓</div>
-          </div>
-        </div>
+        </>
       )}
 
       {!hasConversation ? (
@@ -669,12 +1013,15 @@ function KnowledgeTab({ ragDocs, conversationHistory }) {
         <div className="empty-card"><p>No matching guidelines yet — keep describing symptoms.</p></div>
       ) : (
         <div className="kb-list">
-          {ragDocs.map((doc) => (
-            <div key={doc.id} className="kb-card">
+          {ragDocs.map((doc, i) => (
+            <div key={doc.id} className={`kb-card ${i < 3 ? 'kb-card-used' : ''}`}>
               <div className="kb-card-head">
-                <div>
-                  <div className="kb-title">{doc.title}</div>
-                  <div className="kb-source">{doc.source}</div>
+                <div className="kb-titlewrap">
+                  <span className="kb-rank">{i + 1}</span>
+                  <div>
+                    <div className="kb-title">{doc.title}</div>
+                    <div className="kb-source">{doc.source}</div>
+                  </div>
                 </div>
                 <span className="kb-chunk">{doc.chunk}</span>
               </div>
@@ -685,6 +1032,7 @@ function KnowledgeTab({ ragDocs, conversationHistory }) {
                 <span className="sim-score" style={{ color: simColor(doc.similarity) }}>{doc.similarity.toFixed(2)}</span>
               </div>
               <p className="kb-excerpt">“{doc.excerpt}”</p>
+              {i < 3 && <div className="kb-used"><span className="kb-used-dot" />Injected into Dr. Aria's context</div>}
             </div>
           ))}
         </div>
