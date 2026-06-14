@@ -3,18 +3,25 @@
   "private": true,
   "version": "1.0.0",
   "type": "module",
-  "description": "AI Healthcare Triage Assistant — conversational medical triage chatbot (Dr. Aria). University GenAI project.",
+  "description": "AI Healthcare Triage Assistant — Dr. Aria. Gemini chat + Qdrant RAG. University GenAI project.",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "server": "node server/index.js",
+    "ingest": "node server/ingest.js",
+    "dev:all": "concurrently -n web,api -c cyan,green \"npm run dev\" \"npm run server\""
   },
   "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.21.2",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^4.3.1",
+    "concurrently": "^9.1.0",
     "vite": "^5.4.0"
   }
 }
