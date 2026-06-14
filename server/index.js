@@ -6,8 +6,12 @@
 import 'dotenv/config'
 import express from 'express'
 import cors from 'cors'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { geminiChat, geminiEmbed, geminiJSON, config as gconfig } from './gemini.js'
 import { search, isReady, config as qconfig } from './qdrant.js'
+
+const distDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../dist')
 
 const app = express()
 app.use(cors())
@@ -104,6 +108,10 @@ app.post('/api/chat', async (req, res) => {
     res.status(500).json({ error: err.message || 'server error' })
   }
 })
+
+// In production, serve the built frontend so one Render service hosts UI + API.
+app.use(express.static(distDir))
+app.get('*', (req, res) => res.sendFile(path.join(distDir, 'index.html')))
 
 const PORT = process.env.PORT || 8787
 app.listen(PORT, () => {

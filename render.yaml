@@ -1,0 +1,16 @@
+# Render deployment — one Node web service serving the built frontend + the API.
+# Set the three secret env vars in the Render dashboard (sync:false = not in repo).
+services:
+  - type: web
+    name: dr-aria
+    runtime: node
+    plan: free
+    buildCommand: npm install && npm run build
+    startCommand: node server/index.js
+    envVars:
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: QDRANT_URL
+        sync: false
+      - key: QDRANT_API_KEY
+        sync: false

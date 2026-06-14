@@ -2,10 +2,13 @@
 
 A conversational medical triage chatbot built as a university **Generative AI** project.
 Dr. Aria interviews a patient about their symptoms, classifies urgency into one of five
-triage tiers, and produces a structured, provider-ready clinical summary.
+triage tiers, and produces a structured, provider-ready clinical summary — grounded in a
+**real RAG** pipeline over Indian clinical guidelines.
+
+Localised for **Bengaluru, Karnataka, India** (emergency numbers 112 / 108, Tele-MANAS 14416).
 
 > ⚠️ **Educational project only. Not a medical device and not a substitute for professional
-> medical care.** In a real emergency, call 999 / 112.
+> medical care.** In a real emergency, call 108 / 112.
 
 ---
 
@@ -13,82 +16,97 @@ triage tiers, and produces a structured, provider-ready clinical summary.
 
 | Tab | What it does |
 |-----|--------------|
-| **Triage Chat** | Conversational symptom intake with Dr. Aria. Live emergency banner. |
-| **Patient Summary** | Structured clinical summary card with urgency badge, severity bar, red flags, and "Copy for Provider". |
-| **AI Internals** | Dev panel: model config, LangGraph-style state machine, multi-agent view, memory/context window, syllabus-concept grid, full system prompt, reasoning trace, deployment notes. |
-| **Knowledge Base** | Simulated **RAG** retrieval — query rewriting, HyDE, re-ranking, and NHS/NICE guideline chunks with similarity scores. |
+| **Triage Chat** | Conversational symptom intake. Persistent red 999/108-112 emergency banner, urgency banner, suggestion chips, and a **margin rail** with live triage status + retrieved-guideline citations. |
+| **Patient Summary** | Structured clinical handoff card: verdict banner, severity, symptom pills, red flags, "Copy for Provider". |
+| **AI Internals** | Model config, LangGraph state machine, multi-agent view, memory/context bars, syllabus-concept grid, the live system prompt, reasoning trace. |
+| **Knowledge Base** | The RAG layer — pipeline view + retrieved guideline chunks (similarity from the vector store), with the top‑3 marked as injected into the prompt. |
+
+## 🧠 Architecture
+
+```
+React + Vite (frontend)
+        │  POST /api/chat  { messages, system }
+        ▼
+Node + Express (server/)
+        │  1. embed last user message   ── Gemini gemini-embedding-001
+        │  2. vector search top-k       ── Qdrant
+        │  3. inject top chunks into prompt   (Retrieval-Augmented Generation)
+        │  4. generate reply            ── Gemini 2.5 Flash
+        ▼
+        { text, retrieved[] }  →  rendered in Chat + Knowledge Base
+```
+
+- **LLM:** Google **Gemini** (free AI Studio tier) for both chat and embeddings.
+- **Vector DB:** **Qdrant** (local Docker or Qdrant Cloud free tier).
+- Keys stay **server-side**; the browser only talks to our `/api`.
 
 ## 🎓 GenAI concepts demonstrated
 
-System Prompt · ChatML message format · Persona Prompting · Few-shot Learning ·
-Chain-of-Thought · Structured JSON Output · Memory / Context Window ·
-Multi-phase AI Agent · Safety Guardrails · RAG (simulated, + query rewriting / HyDE / re-ranking) ·
-LangGraph-style state machine · Multi-agent (MCP) orchestration · Deployment.
+System prompt · ChatML · persona · few-shot · chain-of-thought · structured JSON output ·
+multi-phase AI agent · safety guardrails · **real RAG (embeddings + Qdrant + retrieval +
+prompt injection)** · query-rewrite / HyDE / re-rank framing · LangGraph state machine ·
+multi-agent (MCP) orchestration · short/long-term memory · deployment.
 
 ---
 
-## 🚀 Running it
-
-### Option A — Claude.ai artifact (zero setup)
-The chat `fetch` targets the Anthropic Messages endpoint directly. Inside the Claude.ai
-artifact sandbox this is proxied automatically, so it just works.
-
-### Option B — Local dev / deployment (real API key)
-A browser **cannot** call `api.anthropic.com` directly when deployed (no key + CORS).
-A tiny serverless proxy in [`api/chat.js`](api/chat.js) holds the key and forwards requests.
+## 🚀 Setup & running
 
 ```bash
 npm install
-npm run dev          # local dev server
+cp .env.example .env        # then fill in the values below
 ```
 
-Set these environment variables in your host (Vercel / AWS / Netlify):
+**1. Gemini key** — free at <https://aistudio.google.com/app/apikey> → put it in `.env` as `GEMINI_API_KEY`.
 
+**2. Qdrant** — either:
+- **Local:** `docker run -p 6333:6333 qdrant/qdrant` (keep `QDRANT_URL=http://localhost:6333`), or
+- **Cloud:** create a free cluster at <https://cloud.qdrant.io> and set `QDRANT_URL` + `QDRANT_API_KEY`.
+
+**3. Ingest the guidelines into the vector store (one-time):**
+```bash
+npm run ingest      # embeds each guideline chunk with Gemini → upserts to Qdrant
 ```
-ANTHROPIC_API_KEY = sk-ant-...        # server-side secret (never commit)
-VITE_CHAT_ENDPOINT = /api/chat        # routes the browser through the proxy
+
+**4. Run frontend + backend together:**
+```bash
+npm run dev:all     # web on http://localhost:5173, api on http://localhost:8787
 ```
+(or run `npm run dev` and `npm run server` in two terminals.)
+
+Check the backend any time: <http://localhost:8787/api/health>
+
+### Works without any setup
+Even with no key / no Qdrant, the app stays demoable: **"Load a sample case"** on the welcome
+screen populates every tab, and typing an emergency phrase (e.g. *"chest pain spreading to my
+arm"*) still fires the red banner — both are fully client-side.
 
 ```bash
-npm run build        # production build → dist/
+npm run build       # production build → dist/
 ```
-
-Deploy `dist/` as static assets and `api/chat.js` as a serverless function
-(Vercel does both automatically via `vercel.json`).
 
 ---
 
 ## 🗂️ Project structure
 
 ```
-src/App.jsx        # entire app: 4 tabs, state, parsing, RAG, guardrails
-src/styles.css     # medical UI theme (navy header, urgency colours)
-api/chat.js        # serverless Anthropic proxy (deployment only)
+src/App.jsx          # entire frontend: 4 tabs, state, parsing, UI
+src/styles.css       # editorial "marginalia" theme
+shared/knowledge.js  # guideline corpus (used by the frontend demo + backend ingestion)
+server/index.js      # Express API — /api/chat (RAG) + /api/health
+server/gemini.js     # Gemini chat + embeddings
+server/qdrant.js     # Qdrant vector store (REST)
+server/ingest.js     # one-time embed + upsert
 ```
 
 ---
 
+## ☁️ Deployment (Render)
+One Node web service hosts both the built frontend and the API — the Express server serves
+`dist/` (see [render.yaml](render.yaml)). On Render: connect the repo, then set
+`GEMINI_API_KEY`, `QDRANT_URL`, `QDRANT_API_KEY` as environment variables, and run
+`npm run ingest` once against the production Qdrant. Build `npm install && npm run build`,
+start `node server/index.js`.
+
 ## 👥 Team & version roadmap
-
-Built incrementally across 10 versions (2 per team member). See the commit history —
-each commit maps to one roadmap milestone (V1 → V10).
-
-| Person | Versions | Focus |
-|--------|----------|-------|
-| P1 | V1–V2 | Foundations, prompt engineering (system prompt, few-shot, CoT, JSON) |
-| P2 | V3–V4 | Agent architecture & RAG basics |
-| P3 | V5–V6 | Advanced RAG & LangGraph state machine |
-| P4 | V7–V8 | Memory systems & safety / patient summary |
-| P5 | V9–V10 | Multi-agent / MCP & deployment |
-
-### Version log
-- **V1 — Basic Chatbot:** Claude Messages API, system prompt, ChatML, memory, temperature/top-p.
-- **V2 — Prompt Engineering:** persona, few-shot, chain-of-thought, JSON output + AI Internals.
-- **V3 — Agent Logic:** adaptive multi-phase questioning (intake → profiling → history → assessment).
-- **V4 — RAG Basics:** medical knowledge base + keyword retrieval with similarity scores.
-- **V5 — Advanced RAG:** query rewriting, HyDE, cross-encoder re-ranking pipeline.
-- **V6 — LangGraph:** node/edge state machine with a conditional emergency branch.
-- **V7 — Memory:** short-term context window + long-term session records (localStorage).
-- **V8 — Safety + Summary:** emergency guardrails, red alert banner, clinical summary card.
-- **V9 — Multi-Agent / MCP:** orchestrator + symptom/urgency/summary sub-agents.
-- **V10 — Deployment:** serverless proxy, rate-limiting/caching notes, CI/CD, final polish.
+Built across 10 versions (2 per member, V1→V10) — see commit history. P1 foundations/prompting ·
+P2 agent + RAG · P3 advanced RAG + LangGraph · P4 memory + safety/summary · P5 multi-agent/MCP + deployment.
