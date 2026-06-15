@@ -403,6 +403,7 @@ export default function App() {
     setInput('')
     setSessionId(null)
     try { localStorage.removeItem(CURRENT_KEY) } catch (e) { /* ignore */ }
+    setActiveTab('chat') // always land on the Triage Chat tab, even if New chat was clicked from Summary/Internals/KB
     closeSidebarOnMobile()
   }
 
