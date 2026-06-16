@@ -107,6 +107,3 @@ One Node web service hosts both the built frontend and the API — the Express s
 `npm run ingest` once against the production Qdrant. Build `npm install && npm run build`,
 start `node server/index.js`.
 
-## 👥 Team & version roadmap
-Built across 10 versions (2 per member, V1→V10) — see commit history. P1 foundations/prompting ·
-P2 agent + RAG · P3 advanced RAG + LangGraph · P4 memory + safety/summary · P5 multi-agent/MCP + deployment.
