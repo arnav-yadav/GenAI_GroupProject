@@ -1,0 +1,22 @@
+# Keeps the Render free-tier service from sleeping (it spins down after ~15 min idle).
+# The ping must come from OUTSIDE the app — an in-process timer can't wake a suspended
+# instance, since nothing inside it runs once Render puts it to sleep.
+# Targets /api/health, which checks Qdrant but makes NO Gemini calls — so this costs
+# zero against the 20-requests/min free-tier chat quota.
+name: keep-alive
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"   # every 10 min (UTC). GitHub often runs scheduled jobs late
+                              # under load; switch to "*/5 * * * *" if you ever see a cold start.
+  workflow_dispatch: {}        # manual "warm it up now" button — run this before a demo
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping /api/health
+        run: |
+          curl -fsS --max-time 60 --retry 3 --retry-delay 15 \
+            https://dr-aria-glx5.onrender.com/api/health
+          echo "  pinged at $(date -u)"

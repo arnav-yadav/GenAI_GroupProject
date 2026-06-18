@@ -18,6 +18,9 @@ app.use(cors())
 app.use(express.json({ limit: '1mb' }))
 
 app.get('/api/health', async (req, res) => {
+  const vectorStoreReady = await isReady()
+  // Log every health hit so keep-alive pings show up in the Render logs (greppable: "[health]").
+  console.log(`[health] ${new Date().toISOString()} vectorStore=${vectorStoreReady ? 'ready' : 'down'} geminiKey=${!!process.env.GEMINI_API_KEY}`)
   res.json({
     ok: true,
     chatModel: gconfig.CHAT_MODEL,
@@ -25,7 +28,7 @@ app.get('/api/health', async (req, res) => {
     qdrant: qconfig.URL,
     collection: qconfig.COLLECTION,
     geminiKey: !!process.env.GEMINI_API_KEY,
-    vectorStoreReady: await isReady(),
+    vectorStoreReady,
   })
 })
 
